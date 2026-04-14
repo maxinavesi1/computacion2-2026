@@ -18,10 +18,12 @@ def main():
     procesos = {}       # { pid: comando }
     inicio = time.time()
 
+    # ── 1. Lanzar todos los hijos ──────────────────────────────────────────
     for cmd in comandos:
         pid = os.fork()
 
         if pid == 0:
+            # ── HIJO ──────────────────────────────────────────────────────
             partes = cmd.split()          # "sleep 2" → ["sleep", "2"]
             try:
                 os.execvp(partes[0], partes)  # reemplaza al hijo con el comando
@@ -29,9 +31,11 @@ def main():
                 print(f"Error ejecutando '{cmd}': {e}", file=sys.stderr)
                 os._exit(127)             # código 127 = comando no encontrado
         else:
+            # ── PADRE ─────────────────────────────────────────────────────
             procesos[pid] = cmd
             print(f"[{pid}] Iniciado: {cmd}")
 
+    # ── 2. Esperar a que todos los hijos terminen ──────────────────────────
     exitosos = 0
     fallidos = 0
 
@@ -52,6 +56,7 @@ def main():
         else:
             fallidos += 1
 
+    # ── 3. Resumen final ───────────────────────────────────────────────────
     duracion = time.time() - inicio
     total = exitosos + fallidos
 
