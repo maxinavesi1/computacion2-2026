@@ -1,0 +1,6 @@
+total 8
+drwxrwxrwx 1 maxi maxi 4096 Apr 20 14:32 .
+drwxrwxrwx 1 maxi maxi 4096 Apr 20 14:21 ..
+-rwxrwxrwx 1 maxi maxi  201 Apr 20 14:32 archivo.tx
+-rwxrwxrwx 1 maxi maxi    0 Apr 20 14:32 archivo.txt
+-rwxrwxrwx 1 maxi maxi 4709 Apr 20 14:24 minishell.py
