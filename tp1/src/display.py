@@ -435,16 +435,20 @@ def _detalle_memoria(stdscr, snapshot, pid, y0, alto, ancho):
     _addstr_seguro(stdscr, y0 + 4, 0,
                     f"Page faults — minor: {data['minflt']}  major: {data['majflt']}  "
                     f"(hijos: {data['cminflt']}/{data['cmajflt']})")
-    segs = data.get("segmentos")
-    if not segs:
-        _addstr_seguro(stdscr, y0 + 6, 0, "Segmentos: sin permiso para leer /proc/<pid>/maps")
-        return
     fila = y0 + 5
     if "rss_anon_kb" in data:  # modo verbose (SIGUSR2)
+        # Va antes del chequeo de segmentos: el desglose de RSS sale de status,
+        # que sí podemos leer incluso cuando maps nos devuelve EACCES.
         _addstr_seguro(stdscr, fila, 0,
-                        f"VmPeak:{data['vm_peak_kb']:>9} kB   RSS anon: {data['rss_anon_kb']} kB   "
-                        f"file: {data['rss_file_kb']} kB   shmem: {data['rss_shmem_kb']} kB")
+                        f"VmPeak:{data['vm_peak_kb']:>9} kB   RSS anon: {data['rss_anon_kb']} kB"
+                        f"   file: {data['rss_file_kb']} kB   shmem: {data['rss_shmem_kb']} kB")
         fila += 1
+
+    segs = data.get("segmentos")
+    if not segs:
+        _addstr_seguro(stdscr, fila + 1, 0,
+                        "Segmentos: sin permiso para leer /proc/<pid>/maps (proceso de otro usuario)")
+        return
 
     _addstr_seguro(stdscr, fila + 1, 0, "Segmentos de memoria (agrupados):", curses.A_UNDERLINE)
     fila += 2
