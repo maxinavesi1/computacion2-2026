@@ -246,6 +246,25 @@ contexto del handler.
   `stdscr.getmaxyx()` en cada frame. Lo dejo con un handler que lo loguea para
   que quede visible que la señal llegó (la consigna la marca como opcional).
 
+**Latencia de SIGHUP y SIGUSR2 (y por qué los analizadores duermen en tramos).**
+Los dos mecanismos entregan su efecto en ≤ 0.5 s, y llegar a eso fue
+consecuencia de probarlo. En la primera versión cada analizador hacía un único
+`stop_event.wait(intervalo)` y miraba el Pipe de reload sólo al principio de la
+vuelta. Midiéndolo con un SIGHUP seguido de un SIGTERM 3 segundos después, sólo
+5 de los 7 analizadores habían registrado el reload: faltaban Señales y
+Scheduling, los de intervalo 10 s, que estaban dormidos. Lo mismo pasaba con
+SIGUSR2: un dump tomado 1 segundo después del toggle salía con `verbose: false`
+en las 7 vistas.
+
+Ahora el sueño se parte en tramos de 0.5 s (`_TRAMO_MAX` en
+`analizadores/_base.py`) y entre tramos el analizador drena el Pipe y compara el
+`Value` de verbose; si el usuario togleó, corta el sueño y fuerza una vuelta.
+Sólo se interrumpe la cadencia normal ante una acción explícita del usuario, así
+que la propiedad de "cada analizador tiene su propio ritmo" se mantiene. El
+costo son 2 wakeups por segundo por analizador, cada uno un `sem_timedwait` que
+vuelve por timeout: nada comparado con parsear cientos de archivos de `/proc`
+por vuelta.
+
 **Disposición de señales en los hijos.** `senales.reset_en_hijo()` es lo
 primero que corre cada proceso hijo. Pone SIGINT/SIGTERM en `SIG_IGN` porque en
 Linux el Ctrl+C de la terminal le llega a **todo el grupo de procesos en
@@ -343,13 +362,17 @@ docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
   la clase que más código directo generó. `src/senales.py` implementa el
   self-pipe para las 6 señales, y la vista Señales decodifica las máscaras de
   64 bits de `SigBlk/SigIgn/SigCgt/SigPnd/ShdPnd` bit a bit. Decodificarlas me
-  llevó a un detalle que no esperaba: los bits 32 y 33 aparecen seteados en
-  casi cualquier proceso y no corresponden a ninguna señal POSIX ni RT. Son
-  internas de NPTL (la implementación de threads de glibc): `SIGCANCEL` para
-  `pthread_cancel()` y `SIGSETXID` para propagar `setuid()`/`setgid()` a todos
-  los threads de un proceso. Y son la razón exacta de por qué `SIGRTMIN` vale
-  34 y no 32: el kernel expone `__SIGRTMIN = 32`, pero glibc se reserva las dos
-  primeras y corre el rango público dos lugares para arriba.
+  llevó a un detalle que no esperaba: aparecen bits por encima de 31 que no
+  corresponden a ninguna señal POSIX y que están por debajo de `SIGRTMIN`. Son
+  internas de NPTL (la implementación de threads de glibc): la 32 es
+  `SIGCANCEL` (`pthread_cancel()`) y la 33 es `SIGSETXID` (propagar
+  `setuid()`/`setgid()` a todos los threads, porque el kernel sólo cambia las
+  credenciales del thread que hace la syscall). Y son la razón exacta de por
+  qué `SIGRTMIN` vale 34 y no 32: el kernel expone `__SIGRTMIN = 32`, pero
+  glibc se reserva esas dos y corre el rango público dos lugares para arriba.
+  Medido sobre 30 procesos con glibc 2.39: `SIGSETXID` aparece en 5 (4 de los 6
+  multithread), y `SIGCANCEL` en ninguno — ver `dudas.md` §2 para el detalle de
+  por qué.
 
 - **Clase 7 (mmap y memoria compartida):** `Value` y `Array` son, por debajo,
   `mmap` anónimo compartido entre procesos con `fork()` — memoria compartida de
@@ -432,6 +455,16 @@ docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
 - **`pid: host` en Docker Desktop (Windows/macOS)** muestra los procesos de la
   VM de Linux, no los del sistema operativo del host. En Linux nativo sí son
   los procesos reales de la máquina.
+- **La vista Sistema muestra dos conteos de procesos que pueden no coincidir**,
+  y es a propósito: `Procesos: N` sale de recorrer `/proc/<pid>/` uno por uno,
+  mientras que el `(corriendo X/Y)` del load average sale del campo 4 de
+  `/proc/loadavg`, que el kernel calcula por su cuenta. En un kernel normal `Y`
+  debería ser la cantidad de tareas (threads) existentes. Corriendo esto sobre
+  WSL2 medí `1/309` en loadavg cuando `ps -eL` contaba 52 tareas y mi recorrido
+  de `/proc` daba 34 procesos — o sea que el `Y` de WSL2 no es confiable. Mi
+  conteo sí lo es: coincide exactamente con `ps -e`. Decidí mostrar los dos
+  números en vez de "arreglar" el de loadavg, porque la discrepancia es
+  información sobre el entorno, no un error de parseo.
 
 ---
 
@@ -502,6 +535,26 @@ docker compose run --rm monitor python3 -m unittest discover -s tests -v
   (incluida la regresión del piso que no respetaba SIGHUP), el ciclo de orden,
   los filtros con su cancelación por ESC, y el pin manteniéndose primero pese a
   cambiar el criterio de ordenamiento.
+
+### Qué se verificó y cómo
+
+| Verificación | Resultado |
+|---|---|
+| 48 tests unitarios (Linux) | OK |
+| `list_pids()` contra `ps -e` | 34 = 34, coinciden exactamente |
+| Campos 5/6 de `stat` contra `ps -o pgid,sid` | coinciden (`dudas.md` §1) |
+| `grep -i nice /proc/self/status` | 0 coincidencias (`dudas.md` §3) |
+| Sistema completo en modo daemon | 9 hijos, shutdown limpio, 0 huérfanos |
+| SIGUSR1 | dump de ~143 KB, JSON válido, 7 claves |
+| SIGHUP | los 7 analizadores lo registran en el mismo segundo |
+| SIGUSR2 | las 7 vistas pasan a `verbose: true` en < 1 s |
+| `read_fds` con permisos ajenos | 30 de 46 pids devuelven `SIN_PERMISO`, ninguno confundido con "murió" |
+| `docker compose build` | OK |
+| terminfo en el contenedor | 1844 entradas; `setupterm` OK en 12 TERM distintos |
+| `pid: host` vs `monitor-aislado` | 24 procesos y 2 usuarios vs 12 procesos y 1 usuario |
+
+Lo que **no** está cubierto por tests automáticos es el dibujado de curses: eso
+lo verifiqué a ojo corriendo la TUI.
 
 ### Probar `procfs.py` contra el `/proc` real
 

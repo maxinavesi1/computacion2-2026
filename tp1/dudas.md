@@ -42,9 +42,14 @@ page por ser la fuente primaria.
 
 ## 2. Los bits 32 y 33 de las máscaras de señales (resuelto)
 
-Al decodificar `SigCgt`/`SigBlk` me encontré con que casi todos los procesos
-tenían los bits 32 y 33 seteados: fuera del rango 1-31 de las señales POSIX, y
-por debajo de 34, que es donde `signal.SIGRTMIN` dice que arrancan las RT.
+Al decodificar `SigCgt` me encontré con procesos que tenían seteados bits fuera
+del rango 1-31 de las señales POSIX, y por debajo de 34, que es donde
+`signal.SIGRTMIN` dice que arrancan las RT. Por ejemplo, en un `polkitd` de mi
+sistema:
+
+```
+SigCgt: 0000000100000002   ->   ['SIGINT', 'SIGSETXID']
+```
 
 Son señales internas de NPTL, la implementación de threads de glibc:
 
@@ -62,9 +67,29 @@ comentario explica el motivo.
 
 Al final decidí **sí** nombrarlas (`SIGCANCEL`/`SIGSETXID`) en vez de mostrar
 `SIG32`/`SIG33`. Al principio me parecía más honesto no inventarles nombre,
-pero dos bits sin explicación en la vista Señales de casi todos los procesos son
-más confusos que informativos, y el comentario del código aclara que son de
-glibc y no POSIX.
+pero un bit sin explicación en la vista Señales es más confuso que informativo,
+y el comentario del código aclara que son de glibc y no POSIX.
+
+**Lo que medí, para no exagerar el hallazgo.** Mi primera versión de esta nota
+decía que "los bits 32 y 33 aparecen en casi cualquier proceso". Lo conté y no
+es así. Sobre 30 procesos de mi sistema (glibc 2.39):
+
+| | procesos |
+|---|---|
+| con `SIGSETXID` en alguna máscara | 5 de 30 |
+| con `SIGCANCEL` en alguna máscara | **0 de 30** |
+| multithread (`Threads` > 1) | 6, y 4 de esos tienen `SIGSETXID` |
+
+O sea: `SIGSETXID` aparece, pero sólo en procesos que usan NPTL de verdad (no en
+todos), y `SIGCANCEL` **no aparece en ninguno** en glibc 2.39 — la cancelación
+de threads dejó de implementarse con un handler que quede registrado en
+`SigCgt`. Dejo el nombre mapeado igual, porque el bit sigue estando definido y
+puede aparecer en otra versión de libc, pero no puedo afirmar que se vea en la
+práctica acá.
+
+**Queda abierto** si `SIGCANCEL` se ve en glibc más viejas (< 2.34, donde
+`pthread_cancel` sí usaba un handler) o en musl, que no tengo a mano para
+probar.
 
 ## 3. `Nice` no está en `/proc/<pid>/status` (resuelto)
 

@@ -26,9 +26,22 @@ _MAX_VERBOSE = 200   # tope en modo verbose si config.json no dice otra cosa
 
 
 def _inodo(destino):
-    """Extrae el N de 'pipe:[N]' / 'socket:[N]'. None si el destino no tiene esa forma."""
-    if destino and destino.endswith("]") and ":[" in destino:
-        return destino[destino.index(":[") + 2:-1]
+    """
+    Extrae el número de inodo de 'pipe:[N]' / 'socket:[N]'. None si no aplica.
+
+    Sólo pipes y sockets: son los únicos donde el número identifica un objeto
+    del kernel compartido, que es lo que hace interesante mostrarlo (dos FDs
+    con el mismo pipe:[N] son los dos extremos del mismo pipe). Un
+    'anon_inode:[eventpoll]' también matchea la forma ':[...]' pero lo que
+    tiene adentro es el tipo, no un inodo, así que lo dejamos afuera para no
+    rotular como "inodo" algo que no lo es.
+    """
+    if not destino:
+        return None
+    for prefijo in ("pipe:[", "socket:["):
+        if destino.startswith(prefijo) and destino.endswith("]"):
+            n = destino[len(prefijo):-1]
+            return n if n.isdigit() else None
     return None
 
 

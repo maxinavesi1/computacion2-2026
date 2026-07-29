@@ -252,9 +252,13 @@ class TestModoVerbose(unittest.TestCase):
         self.assertEqual(an_fds._inodo("pipe:[2249]"), "2249")
         self.assertEqual(an_fds._inodo("socket:[31337]"), "31337")
 
-    def test_inodo_es_none_para_archivos_normales(self):
-        self.assertIsNone(an_fds._inodo("/dev/pts/0"))
-        self.assertIsNone(an_fds._inodo(None))
+    def test_inodo_es_none_para_lo_que_no_es_pipe_ni_socket(self):
+        # anon_inode también tiene la forma ':[...]' pero adentro trae el tipo,
+        # no un inodo: rotularlo como inodo sería mentir.
+        for destino in ("/dev/pts/0", "/home/x/a.txt", "anon_inode:[eventpoll]",
+                        "anon_inode:[eventfd]", None, ""):
+            with self.subTest(destino=destino):
+                self.assertIsNone(an_fds._inodo(destino))
 
 
 if __name__ == "__main__":

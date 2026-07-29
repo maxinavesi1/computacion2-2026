@@ -13,7 +13,8 @@ Cada analizador es un proceso independiente (multiprocessing.Process) que:
      así el Display nunca ve un diccionario a medio construir),
   4. duerme el intervalo configurado (ajustable en caliente vía
      multiprocessing.Value desde el Display con +/-), despertando antes si
-     se pide shutdown.
+     se pide shutdown y atendiendo los reloads de config que lleguen mientras
+     duerme (ver la nota sobre `_TRAMO_MAX` más abajo).
 
 `extraer_fn` recibe siempre la misma firma:
 
@@ -34,6 +35,40 @@ import time
 
 import senales
 
+# Trozo máximo de sueño. El loop duerme en tramos en vez de hacer un solo
+# stop_event.wait(intervalo), y entre tramo y tramo mira el Pipe de reload.
+#
+# El motivo lo encontré probando: mandando un SIGHUP y un SIGTERM 3 segundos
+# después, sólo 5 de los 7 analizadores habían registrado el reload. Los dos
+# que faltaban eran Señales y Scheduling, los de intervalo 10s: estaban
+# dormidos en un único wait(10) y el Pipe se miraba únicamente al principio de
+# la vuelta, así que la config nueva les llegaba hasta 10 segundos tarde.
+#
+# Ahora la latencia de reload es <= 0.5s para los siete, sin cambiar la cadencia
+# de refresco de datos (que sigue siendo el intervalo configurado). El costo son
+# 2 wakeups por segundo por analizador, cada uno un sem_timedwait que vuelve por
+# timeout: irrelevante al lado de parsear cientos de archivos de /proc.
+_TRAMO_MAX = 0.5
+
+
+def _drenar_reload(reload_conn, log_queue, nombre_vista, cfg_actual):
+    """
+    Aplica los reloads pendientes en el Pipe (no bloqueante).
+
+    Devuelve la config vigente: la última recibida, o `cfg_actual` si no había
+    nada. Se llama al principio de cada vuelta y también entre tramos de sueño.
+    """
+    if reload_conn is None:
+        return cfg_actual
+    cfg = cfg_actual
+    try:
+        while reload_conn.poll():
+            cfg = reload_conn.recv()
+            _log(log_queue, f"[{nombre_vista}] config recargada por SIGHUP")
+    except (OSError, EOFError):
+        pass  # el padre cerró su punta del Pipe: estamos apagando
+    return cfg
+
 
 def run_loop(nombre_vista, stop_event, interval_value, snapshot, log_queue,
              extraer_fn, reload_conn=None, verbose_value=None, cfg_inicial=None,
@@ -46,15 +81,7 @@ def run_loop(nombre_vista, stop_event, interval_value, snapshot, log_queue,
     while not stop_event.is_set():
         t0 = time.time()
 
-        # ¿Llegó una config nueva por SIGHUP? (no bloqueante)
-        if reload_conn is not None:
-            try:
-                while reload_conn.poll():
-                    cfg = reload_conn.recv()
-                    _log(log_queue, f"[{nombre_vista}] config recargada por SIGHUP")
-            except (OSError, EOFError):
-                pass
-
+        cfg = _drenar_reload(reload_conn, log_queue, nombre_vista, cfg)
         verbose = bool(verbose_value.value) if verbose_value is not None else False
 
         try:
@@ -63,10 +90,23 @@ def run_loop(nombre_vista, stop_event, interval_value, snapshot, log_queue,
         except Exception as e:
             _log(log_queue, f"[{nombre_vista}] error inesperado en el loop: {e!r}")
 
-        intervalo = interval_value.value
-        transcurrido = time.time() - t0
-        espera = max(0.05, intervalo - transcurrido)
-        stop_event.wait(espera)
+        # Dormir hasta completar el intervalo, en tramos, atendiendo reloads y
+        # cambios de verbose.
+        restante = max(0.05, interval_value.value - (time.time() - t0))
+        while restante > 0:
+            if stop_event.wait(min(_TRAMO_MAX, restante)):
+                return  # shutdown pedido: cortamos sin terminar de dormir
+            cfg = _drenar_reload(reload_conn, log_queue, nombre_vista, cfg)
+            # Un SIGUSR2 corta el sueño y fuerza una vuelta ya. Sin esto, el
+            # efecto de verbose tardaba hasta un intervalo completo en verse
+            # (10 s en Señales y Scheduling): lo medí mandando SIGUSR2 y un
+            # SIGUSR1 un segundo después, y el dump salía con verbose=False.
+            # Sólo interrumpe la cadencia normal cuando el usuario realmente
+            # togglea —una acción explícita y poco frecuente—, así que no
+            # rompe la propiedad de que cada analizador tiene su propio ritmo.
+            if verbose_value is not None and bool(verbose_value.value) != verbose:
+                break
+            restante -= _TRAMO_MAX
 
 
 def _log(log_queue, mensaje):
