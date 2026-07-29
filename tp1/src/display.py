@@ -136,6 +136,15 @@ def _manejar_tecla(tecla, estado, interval_values, stop_event, snapshot, dump_di
     if ch == "q":
         return True
 
+    # La ayuda es un overlay que tapa la pantalla, y su propio texto dice
+    # "cualquier tecla cierra esta ayuda". Antes sólo la cerraba 'h'/'?': con la
+    # ayuda abierta, apretar '2' cambiaba la vista de atrás sin que se viera
+    # nada, porque el panel seguía encima. Ahora la primera tecla la cierra y se
+    # consume ahí, que es lo que hace cualquier overlay de ayuda.
+    if estado.mostrar_ayuda:
+        estado.mostrar_ayuda = False
+        return False
+
     if ch in vistas.TECLA_A_VISTA:
         estado.vista_actual = vistas.TECLA_A_VISTA[ch]
         estado.seleccion = 0
@@ -340,33 +349,30 @@ def _dibujar_prompt_entrada(stdscr, alto, ancho, estado):
 
 
 def _dibujar_ayuda(stdscr, alto, ancho):
+    # 17 líneas + el marco = 19: entra en una terminal estándar de 24 filas.
+    # La versión larga anterior tenía 26 y `h = min(alto - 2, ...)` recortaba
+    # justo el final, así que en 24 filas se perdía hasta la línea que explica
+    # cómo cerrar el panel.
     lineas = [
         "AYUDA — Monitor de Procesos y Threads",
         "",
-        "1 / r   Vista Resumen        5 / s   Vista Señales",
-        "2 / m   Vista Memoria        6 / p   Vista Scheduling",
-        "3 / f   Vista File Descrip.  7 / g   Vista Sistema global",
-        "4 / t   Vista Threads",
+        "1/r Resumen    2/m Memoria     3/f File descriptors  4/t Threads",
+        "5/s Señales    6/p Scheduling  7/g Sistema global",
         "",
-        "Flechas ↑ ↓   Navegar la lista de procesos",
-        "Enter          Pinnear/despinnear el proceso seleccionado",
-        "/              Filtrar por nombre de comando",
-        "u              Filtrar por usuario",
-        "c              Cambiar orden (CPU% / RSS / PID)",
-        "+ / -          Ajustar el intervalo de refresco de la vista activa",
-        "q              Salir limpiamente",
-        "h / ?          Mostrar/ocultar esta ayuda",
+        "↑ ↓     Navegar la lista       c    Orden: CPU% / RSS / PID",
+        "Enter   Pin del proceso        / u  Filtrar comando / usuario",
+        "+ / -   Intervalo de la vista  q    Salir limpiamente",
         "",
-        "Señales del proceso monitor (kill -SIGXXX <pid_main>):",
-        "  SIGINT/SIGTERM  shutdown limpio      SIGUSR1  dump del snapshot a JSON",
-        "  SIGHUP          recarga config.json  SIGUSR2  toggle modo verbose",
-        "  SIGWINCH        repintar (resize de terminal)",
+        "Señales al proceso main (kill -SIGXXX <pid>):",
+        "  INT/TERM  shutdown limpio      USR1   dump del snapshot a JSON",
+        "  HUP       recarga config.json  USR2   toggle modo verbose",
+        "  WINCH     repintar (resize de terminal)",
         "",
-        "Modo verbose (SIGUSR2) agrega: más FDs por proceso + su inodo,",
-        "el desglose de RSS (anon/file/shmem) y, por thread, el core y",
-        "los jiffies crudos de utime/stime.",
+        "Verbose (USR2) agrega: más FDs por proceso + el inodo de pipes y",
+        "sockets, el desglose de RSS (anon/file/shmem) y, por thread, el",
+        "core donde corrió y sus jiffies crudos de utime/stime.",
         "",
-        "(cualquier tecla para cerrar esta ayuda)",
+        "(cualquier tecla cierra esta ayuda)",
     ]
     h = min(alto - 2, len(lineas) + 2)
     w = min(ancho - 4, max(len(l) for l in lineas) + 4)

@@ -242,6 +242,43 @@ class TestListaYPin(unittest.TestCase):
         self.assertEqual(estado.seleccion, 0)
 
 
+class TestAyuda(unittest.TestCase):
+    def test_h_y_pregunta_abren_la_ayuda(self):
+        for tecla in ("h", "?"):
+            with self.subTest(tecla=tecla):
+                estado = display.EstadoUI()
+                _apretar(estado, tecla)
+                self.assertTrue(estado.mostrar_ayuda)
+
+    def test_cualquier_tecla_cierra_la_ayuda(self):
+        # El propio panel dice "cualquier tecla cierra esta ayuda"; antes sólo
+        # la cerraba h/?, así que apretar '2' cambiaba la vista de atrás
+        # mientras el overlay seguía tapando la pantalla.
+        for tecla in ("h", "?", "2", "c", "+", "-", "/", "u", "z"):
+            with self.subTest(tecla=tecla):
+                estado = display.EstadoUI()
+                estado.mostrar_ayuda = True
+                _apretar(estado, tecla)
+                self.assertFalse(estado.mostrar_ayuda)
+
+    def test_la_tecla_que_cierra_la_ayuda_no_hace_otra_cosa(self):
+        estado = display.EstadoUI()
+        estado.mostrar_ayuda = True
+        _apretar(estado, "2")
+        self.assertEqual(estado.vista_actual, "resumen")  # no cambió de vista
+
+    def test_q_sale_incluso_con_la_ayuda_abierta(self):
+        estado = display.EstadoUI()
+        estado.mostrar_ayuda = True
+        self.assertTrue(_apretar(estado, "q"))
+
+    def test_la_ayuda_entra_en_una_terminal_de_24_filas(self):
+        import inspect
+        fuente = inspect.getsource(display._dibujar_ayuda)
+        lineas = fuente.count('\n        "')
+        self.assertLessEqual(lineas + 2, 24, f"la ayuda tiene {lineas} lineas + marco")
+
+
 class TestModoVerbose(unittest.TestCase):
     """SIGUSR2 tiene que cambiar los DATOS, no sólo el cartel del encabezado."""
 
