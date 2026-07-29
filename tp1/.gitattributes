@@ -1,0 +1,16 @@
+# Este TP se desarrolla en Windows pero corre en Linux (Docker), así que hay
+# que forzar finales de línea LF en todo lo que el contenedor ejecuta o parsea.
+#
+# El caso concreto que rompe: el Dockerfile usa continuaciones de línea con
+# "\" al final. Si Git entrega el archivo con CRLF, la barra queda seguida de
+# un \r y el shell del build interpreta la línea como incompleta, así que el
+# apt-get install falla. Lo mismo aplica a config.json y a los fixtures de
+# tests, donde un \r extra se metería en los valores parseados.
+*               text=auto eol=lf
+*.py            text eol=lf
+*.json          text eol=lf
+*.yml           text eol=lf
+*.md            text eol=lf
+*.txt           text eol=lf
+Dockerfile      text eol=lf
+.gitignore      text eol=lf

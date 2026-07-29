@@ -1,0 +1,29 @@
+Name:	ejemplo
+Umask:	0022
+State:	S (sleeping)
+Tgid:	1234
+Pid:	1234
+PPid:	1
+TracerPid:	0
+Uid:	1000	1000	1000	1000
+Gid:	1000	1000	1000	1000
+FDSize:	64
+Threads:	4
+SigQ:	0/15955
+SigPnd:	0000000000000000
+ShdPnd:	0000000000000000
+SigBlk:	0000000000010000
+SigIgn:	0000000000001000
+SigCgt:	0000000180000000
+VmPeak:	   123456 kB
+VmSize:	   123000 kB
+VmHWM:	    45000 kB
+VmRSS:	    44000 kB
+VmData:	    30000 kB
+VmStk:	      132 kB
+VmExe:	     2000 kB
+VmLib:	     8000 kB
+VmSwap:	      512 kB
+Cpus_allowed_list:	0-3
+voluntary_ctxt_switches:	42
+nonvoluntary_ctxt_switches:	7

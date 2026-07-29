@@ -1,0 +1,53 @@
+services:
+  # Servicio por defecto: `docker compose up --build`.
+  #
+  # Ve los procesos del host, que es lo que hace que el monitor sea interesante
+  # (procesos de verdad, de varios usuarios, con zombies y kernel threads).
+  monitor:
+    build: .
+    container_name: tp1-monitor
+    # pid: host expone el namespace de PIDs del HOST dentro del contenedor, así
+    # /proc muestra todos los procesos de la máquina (como htop) y no sólo los
+    # ~10 que viven dentro del contenedor. Es deliberadamente lo opuesto al
+    # aislamiento que normalmente se busca en Docker: ver README §3.6 para la
+    # justificación y el servicio monitor-aislado de abajo para el contraste.
+    pid: host
+    # cap_add SYS_PTRACE en vez de privileged: true (que da MUCHO más de lo
+    # necesario). Sin esta capability, /proc/<pid>/maps y /proc/<pid>/fd de
+    # procesos ajenos dan EACCES: el monitor lo maneja y muestra "sin permiso",
+    # pero las vistas Memoria y FDs quedan casi vacías para todo lo que no sea
+    # propio.
+    cap_add:
+      - SYS_PTRACE
+    tty: true
+    stdin_open: true
+    environment:
+      # Si el host no exporta TERM (ej: se lanza desde PowerShell), caemos a
+      # xterm-256color, que está en el terminfo de la imagen.
+      - TERM=${TERM:-xterm-256color}
+    volumes:
+      # bind mount del repo: permite editar config.json (o el código) desde el
+      # host y que el contenedor lo vea sin reconstruir la imagen — es lo que
+      # hace demostrable el reload por SIGHUP. Además deja los dump_*.json y
+      # monitor.log visibles en el host.
+      - ./:/app
+
+  # Contraste didáctico: el MISMO monitor sin pid: host ni SYS_PTRACE, o sea
+  # con el aislamiento normal de un contenedor. Se levanta a propósito con:
+  #
+  #     docker compose run --rm monitor-aislado
+  #
+  # Sirve para ver en vivo la diferencia: acá /proc sólo tiene los ~10 procesos
+  # del propio monitor (main + Manager + recolector + 7 analizadores + display),
+  # todos del mismo usuario, sin zombies ni kernel threads. Es la demostración
+  # concreta de que un PID namespace es una vista parcial de /proc, no un
+  # filtro que aplique el monitor.
+  monitor-aislado:
+    build: .
+    profiles: ["aislado"]   # no se levanta con `up`, sólo con `run`
+    tty: true
+    stdin_open: true
+    environment:
+      - TERM=${TERM:-xterm-256color}
+    volumes:
+      - ./:/app

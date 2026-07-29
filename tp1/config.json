@@ -1,0 +1,23 @@
+{
+  "intervalos": {
+    "resumen": 2.0,
+    "memoria": 3.0,
+    "fds": 5.0,
+    "threads": 2.0,
+    "senales": 10.0,
+    "scheduling": 10.0,
+    "sistema": 2.0,
+    "recolector": 1.0
+  },
+  "fds": {
+    "max_mostrados": 200
+  },
+  "filtros_default": {
+    "comando": "",
+    "usuario": ""
+  },
+  "dump_dir": ".",
+  "log_file": "monitor.log",
+  "modo_daemon": false,
+  "daemon_intervalo_log": 5.0
+}

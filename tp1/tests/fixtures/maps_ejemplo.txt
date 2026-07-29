@@ -1,0 +1,6 @@
+55bbce774000-55bbce776000 r--p 00000000 fe:00 190854                     /usr/bin/ejemplo
+55bbce776000-55bbce77b000 r-xp 00002000 fe:00 190854                     /usr/bin/ejemplo
+55bbef4db000-55bbef4fc000 rw-p 00000000 00:00 0                          [heap]
+7f256b805000-7f256b812000 rw-p 00000000 00:00 0
+7ffe00000000-7ffe00021000 rw-p 00000000 00:00 0                          [stack]
+7f256b900000-7f256b910000 rw-s 00000000 00:05 1234                       /dev/zero (deleted)

@@ -1,0 +1,11 @@
+# Este TP no usa dependencias de terceros a propósito.
+#
+# La TUI está hecha con `curses`, que es parte de la stdlib de Python en
+# Linux (no hace falta pip install). Se evaluó usar `rich`, pero curses
+# ofrece control más directo sobre getch() no bloqueante y paneles, que es
+# lo que pide la consigna para navegación de teclado + refresco diferenciado
+# por vista, sin sumar una dependencia externa innecesaria.
+#
+# Si en algún momento se agrega una dependencia real, va acá con versión
+# fijada, por ejemplo:
+#   rich==13.7.1

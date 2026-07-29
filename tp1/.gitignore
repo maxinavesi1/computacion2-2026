@@ -1,0 +1,5 @@
+__pycache__/
+*.pyc
+monitor.log
+dump_*.json
+.DS_Store
