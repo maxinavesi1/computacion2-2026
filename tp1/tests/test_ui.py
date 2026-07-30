@@ -1,9 +1,9 @@
 """
 tests/test_ui.py — tests del estado de la TUI y de la tabla de vistas.
 
-Durante el desarrollo probé la TUI a mano (y con una pseudo-terminal, ver
-dudas.md), pero eso no es repetible: depende de timings entre teclas. Estos
-tests atacan el problema por el otro lado: el manejo de teclado de display.py
+Durante el desarrollo probé la TUI a mano, apretando las teclas, pero eso no es
+repetible ni sirve como regresión. Estos tests atacan el problema por el otro
+lado, aprovechando que el manejo de teclado de display.py
 está separado del dibujado, así que se puede inyectar un keycode directamente
 en `_manejar_tecla` y verificar cómo queda `EstadoUI`, sin abrir curses ni
 necesitar una terminal. Es determinista y corre en cualquier lado.

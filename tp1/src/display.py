@@ -264,13 +264,30 @@ def _dibujar(stdscr, snapshot, estado, interval_values, verbose_value, top3_cpu_
 
     _dibujar_pie(stdscr, alto - 1, ancho, estado)
 
-    if estado.mostrar_ayuda:
-        _dibujar_ayuda(stdscr, alto, ancho)
-
+    # El prompt de filtro se dibuja SOBRE stdscr, así que es parte del mismo
+    # contenido y se vuelca junto con todo lo demás.
     if estado.modo_entrada is not None:
         _dibujar_prompt_entrada(stdscr, alto, ancho, estado)
 
-    stdscr.refresh()
+    # noutrefresh() + doupdate() en vez de refresh() en cada ventana.
+    #
+    # La ayuda vive en su PROPIA ventana (curses.newwin), y refrescar dos
+    # ventanas por separado en el mismo frame no funciona: `refresh()` vuelca a
+    # la terminal Y actualiza el modelo que ncurses tiene de la pantalla física,
+    # así que el segundo `refresh()` ve el panel como "basura que sobra" y lo
+    # repinta con el contenido de la ventana de abajo. Con las dos llamadas en
+    # el orden original la ayuda se borraba dentro del mismo frame y 'h' no
+    # mostraba nada; invirtiendo el orden aparecía, pero parpadeando en cada
+    # frame (~7 por segundo) porque cada vuelta la tapaba y la volvía a pintar.
+    #
+    # `noutrefresh()` sólo actualiza el buffer virtual, sin tocar la terminal;
+    # `doupdate()` compone TODO lo acumulado y hace una única escritura física.
+    # Es el mecanismo estándar de curses justamente para componer ventanas
+    # superpuestas sin parpadeo.
+    stdscr.noutrefresh()
+    if estado.mostrar_ayuda:
+        _dibujar_ayuda(stdscr, alto, ancho)
+    curses.doupdate()
 
 
 def _addstr_seguro(stdscr, y, x, texto, attr=0):
@@ -385,7 +402,9 @@ def _dibujar_ayuda(stdscr, alto, ancho):
             win.addnstr(i + 1, 2, linea, w - 4)
         except curses.error:
             pass
-    win.refresh()
+    # noutrefresh y no refresh: quien vuelca a la terminal es el doupdate() de
+    # _dibujar(), que compone esta ventana con stdscr en una sola escritura.
+    win.noutrefresh()
 
 
 # ---------------------------------------------------------------------------

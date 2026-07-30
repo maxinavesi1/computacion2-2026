@@ -37,7 +37,7 @@ services:
   #
   #     docker compose run --rm monitor-aislado
   #
-  # Sirve para ver en vivo la diferencia: acá /proc sólo tiene los ~10 procesos
+  # Sirve para ver en vivo la diferencia: acá /proc sólo tiene los 11 procesos
   # del propio monitor (main + Manager + recolector + 7 analizadores + display),
   # todos del mismo usuario, sin zombies ni kernel threads. Es la demostración
   # concreta de que un PID namespace es una vista parcial de /proc, no un

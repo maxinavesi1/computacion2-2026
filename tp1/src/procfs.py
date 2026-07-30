@@ -8,8 +8,26 @@ strings crudos de /proc.
 
 Referencia usada para el parseo de /proc/<pid>/stat: proc(5) man page
 (https://man7.org/linux/man-pages/man5/proc.5.html), sección "/proc/pid/stat".
-Ver dudas.md para una nota sobre una pequeña discrepancia de numeración de
-campos que encontramos entre la consigna y el man page.
+
+Nota sobre una discrepancia con la consigna: la consigna ubica la sesión (SID)
+y el grupo de procesos (PGID) en los "campos 6-7" de stat. Según proc(5) son el
+6 y el 5 respectivamente:
+
+    (4) ppid   (5) pgrp   (6) session   (7) tty_nr
+
+o sea que `session` sí es el 6 y coincide, pero `pgrp` es el 5, no el 7 (el 7
+es tty_nr). Mi lectura es que la consigna quiso decir "campos 5-6" y además los
+nombró en el orden inverso al que aparecen en el archivo. Lo verifiqué
+comparando /proc crudo contra ps:
+
+    awk '{print "pgrp="$5, "session="$6}' /proc/$$/stat
+    ps -o pgid=,sid= -p $$        # -> los mismos dos números
+
+El resto de los campos que usa este módulo coinciden exactamente entre la
+consigna y el man page (minflt/majflt 10-13, utime/stime 14-15, priority 18,
+nice 19, rt_priority 40, policy 41), así que es un error puntual de esa fila y
+no un criterio de numeración distinto. Me quedo con proc(5) por ser la fuente
+primaria.
 
 Convención de errores: casi todas las funciones que leen un archivo de
 /proc/<pid>/... pueden fallar porque el proceso terminó entre que lo listamos

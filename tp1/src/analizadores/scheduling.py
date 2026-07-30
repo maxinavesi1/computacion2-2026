@@ -9,8 +9,8 @@ Nota sobre Nice: la consigna ofrece "/proc/<pid>/stat campo 19 O
 tiene ni tuvo nunca una línea "Nice:" (se puede verificar con
 `grep -i nice /proc/self/status`, que no devuelve nada). Los campos de status
 relacionados con scheduling son Cpus_allowed_list y los ctxt_switches, que sí
-usamos acá. Así que el campo 19 de stat es la única fuente real de nice.
-Ver dudas.md, punto 3.
+usamos acá. Así que el campo 19 de stat es la única fuente real de nice, y la
+alternativa que ofrece la consigna simplemente no existe.
 """
 
 import procfs

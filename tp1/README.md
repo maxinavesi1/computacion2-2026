@@ -28,9 +28,11 @@ vistas alternables.
 
 ## 1. Descripción general
 
-El monitor levanta **10 procesos**: el principal (orquestador), el proceso
+El monitor levanta **11 procesos**: el principal (orquestador), el proceso
 servidor que crea `multiprocessing.Manager()`, el recolector, los 7
-analizadores y el display. Cada analizador lee **sólo** `/proc` —a través de
+analizadores y el display. Son 10 en modo daemon, donde el display no se lanza.
+Verificable con `pgrep -P <pid de main>`, que devuelve los 10 hijos directos.
+Cada analizador lee **sólo** `/proc` —a través de
 `procfs.py`, el único módulo del proyecto que toca el filesystem— y escribe su
 resultado en una estructura de memoria compartida (`snapshot`) que la TUI lee
 para pintar las 7 vistas.
@@ -309,7 +311,7 @@ distinta a la que dice su propio `ts`.
 ### 3.6 `pid: host`: por qué acepto romper el aislamiento
 
 Sin `pid: host`, el contenedor tiene su propio PID namespace y el monitor ve
-únicamente sus ~10 procesos. Funciona perfecto, pero el "sistema" que muestra
+únicamente sus 11 procesos. Funciona perfecto, pero el "sistema" que muestra
 es un contenedor casi vacío: todos los procesos del mismo usuario, ningún
 zombie, ningún kernel thread, nada que filtrar con `u`.
 
@@ -370,9 +372,12 @@ docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
   credenciales del thread que hace la syscall). Y son la razón exacta de por
   qué `SIGRTMIN` vale 34 y no 32: el kernel expone `__SIGRTMIN = 32`, pero
   glibc se reserva esas dos y corre el rango público dos lugares para arriba.
-  Medido sobre 30 procesos con glibc 2.39: `SIGSETXID` aparece en 5 (4 de los 6
-  multithread), y `SIGCANCEL` en ninguno — ver `dudas.md` §2 para el detalle de
-  por qué.
+  Antes de escribir esto creía que los dos bits aparecían en casi cualquier
+  proceso, así que lo conté: sobre 30 procesos con glibc 2.39, `SIGSETXID`
+  aparece en 5 (4 de los 6 multithread) y `SIGCANCEL` **en ninguno** — en glibc
+  moderna la cancelación de threads dejó de dejar un handler registrado en
+  `SigCgt`. Mapeo los dos nombres igual, porque el bit sigue definido y puede
+  aparecer en otra libc, pero no puedo afirmar que se vea en la práctica acá.
 
 - **Clase 7 (mmap y memoria compartida):** `Value` y `Array` son, por debajo,
   `mmap` anónimo compartido entre procesos con `fork()` — memoria compartida de
@@ -423,8 +428,8 @@ docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
 - **`Nice` sale sólo de `stat`.** La consigna ofrece `/proc/<pid>/stat` campo
   19 **o** `/proc/<pid>/status: Nice`. La segunda opción no existe: `status` no
   tiene ni tuvo nunca una línea `Nice:` (`grep -i nice /proc/self/status` no
-  devuelve nada). Uso el campo 19 de `stat`, que es la única fuente real. Ver
-  `dudas.md` §3.
+  devuelve nada, en ningún kernel — no es una cuestión de versión). Uso el
+  campo 19 de `stat`, que es la única fuente real.
 - **CPU% en la primera lectura de un PID nuevo:** siempre muestra `0.0`, porque
   no hay lectura anterior con la que calcular el delta de jiffies. Se corrige
   en la vuelta siguiente de ese analizador. Lo mismo pasa si un PID
@@ -434,13 +439,19 @@ docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
   detalle se recortan. Uso `addnstr` para no crashear, pero el contenido se
   corta y no implementé scroll horizontal ni vertical en el panel de detalle
   (sí en la lista de procesos).
-- **Escalabilidad de la vista FDs.** Con `pid: host` y varios cientos de
-  procesos, el analizador de FDs hace un `listdir` + un `readlink` por cada FD
-  de cada proceso en cada vuelta. Es el cuello de botella del sistema y la
-  razón de su intervalo de 5 s y del tope de 20 FDs por proceso en modo no
-  verbose. No implementé el arreglo real, que sería que el recolector reparta
-  los PIDs entre varios workers por una `Queue` en vez de que un solo proceso
-  recorra todos.
+- **Escalabilidad: lectura duplicada y volumen de FDs.** Como cada analizador
+  es autónomo y lee lo que necesita, hay archivos que se abren varias veces por
+  ciclo: `/proc/<pid>/status` lo leen **5** analizadores (resumen, memoria,
+  senales, scheduling y sistema) y `/proc/<pid>/stat` lo leen **4**. Con N
+  procesos vivos eso es 5N y 4N lecturas por ciclo completo en vez de N y N.
+  Lo atenúa que cada uno corra a su propio ritmo (los de 10 s aportan poco),
+  pero es trabajo duplicado real, y es el precio explícito del desacople entre
+  analizadores (ver §3.5 y `dudas.md` §2).
+  Aparte de eso, el analizador de FDs es el cuello de botella por volumen, no
+  por duplicación: hace un `listdir` más un `readlink` **por cada FD de cada
+  proceso** en cada vuelta. De ahí su intervalo de 5 s y el tope de 20 FDs por
+  proceso en modo no verbose. El arreglo real —que el recolector reparta los
+  PIDs entre varios workers por una `Queue`— no lo implementé.
 - **Si un analizador muere, nadie lo relanza.** Si un analizador se cae por una
   excepción no capturada, su clave del snapshot deja de actualizarse: el `ts`
   queda viejo y los datos congelados. El Display **no** muestra hoy un aviso de
@@ -524,26 +535,27 @@ importa `pwd`/`grp`:
 docker compose run --rm monitor python3 -m unittest discover -s tests -v
 ```
 
-**48 tests** en dos archivos:
+**53 tests** en dos archivos:
 
 - `tests/test_procfs.py` (23): parseo de `stat` —incluyendo el caso límite de
   un `comm` con espacios y paréntesis propios—, de `status`, de `maps` y su
   agrupamiento por categoría, decodificación de máscaras de señales (con las
   internas de glibc y las RT) y cálculo de CPU%.
-- `tests/test_ui.py` (25): la tabla de vistas contra los valores de la
+- `tests/test_ui.py` (30): la tabla de vistas contra los valores de la
   consigna, el mapeo de las 14 teclas de vista, el clamp de intervalos
   (incluida la regresión del piso que no respetaba SIGHUP), el ciclo de orden,
-  los filtros con su cancelación por ESC, y el pin manteniéndose primero pese a
-  cambiar el criterio de ordenamiento.
+  los filtros con su cancelación por ESC, el pin manteniéndose primero pese a
+  cambiar el criterio de ordenamiento, y el overlay de ayuda (que cierre con
+  cualquier tecla y que no crezca más allá de una terminal de 24 filas).
 
 ### Qué se verificó y cómo
 
 | Verificación | Resultado |
 |---|---|
-| 48 tests unitarios (Linux) | OK |
+| 53 tests unitarios (Linux nativo y dentro del contenedor) | OK |
 | `list_pids()` contra `ps -e` | 34 = 34, coinciden exactamente |
-| Campos 5/6 de `stat` contra `ps -o pgid,sid` | coinciden (`dudas.md` §1) |
-| `grep -i nice /proc/self/status` | 0 coincidencias (`dudas.md` §3) |
+| Campos 5/6 de `stat` contra `ps -o pgid,sid` | coinciden (ver el docstring de `procfs.py`) |
+| `grep -i nice /proc/self/status` | 0 coincidencias: el campo no existe |
 | Sistema completo en modo daemon | 9 hijos, shutdown limpio, 0 huérfanos |
 | SIGUSR1 | dump de ~143 KB, JSON válido, 7 claves |
 | SIGHUP | los 7 analizadores lo registran en el mismo segundo |
@@ -552,9 +564,16 @@ docker compose run --rm monitor python3 -m unittest discover -s tests -v
 | `docker compose build` | OK |
 | terminfo en el contenedor | 1844 entradas; `setupterm` OK en 12 TERM distintos |
 | `pid: host` vs `monitor-aislado` | 24 procesos y 2 usuarios vs 12 procesos y 1 usuario |
+| Arranque de la TUI y las 14 teclas de vista | las 7 vistas pintan barra y panel de detalle |
+| `+`/`-`, `c`, `/`, `↑↓`, `Enter`, `h`, `q` | todas responden; `q` sale con código 0 y 0 huérfanos |
 
-Lo que **no** está cubierto por tests automáticos es el dibujado de curses: eso
-lo verifiqué a ojo corriendo la TUI.
+La TUI la verifiqué de dos maneras. Los 30 tests de `test_ui.py` cubren la
+lógica de teclado sobre `EstadoUI` sin abrir curses. Además la corrí de verdad
+bajo una pseudo-terminal de 24×100 (módulo `pty` de la stdlib), mandándole
+teclas y leyendo la salida a través de un emulador VT100 para poder afirmar qué
+quedaba efectivamente en pantalla en cada paso. Ese arnés vive fuera del repo
+porque depende de una librería que no es del TP, pero fue lo que hizo aparecer
+el bug del panel de ayuda que se describe en §8.
 
 ### Probar `procfs.py` contra el `/proc` real
 
@@ -614,6 +633,23 @@ extremo aparece en el proceso analizador correspondiente.
   muta `EstadoUI` y `_dibujar()` sólo lee. Además de ser más fácil de razonar,
   es lo que hace testeable la TUI sin abrir curses ni una pty: `test_ui.py`
   inyecta keycodes directamente y verifica el estado resultante.
+- **`noutrefresh()` + `doupdate()` en vez de `refresh()` por ventana.** El panel
+  de ayuda es la única cosa que vive en una ventana propia (`curses.newwin`), y
+  ahí aprendí por qué curses distingue las dos operaciones. Refrescar dos
+  ventanas superpuestas por separado no funciona: `refresh()` vuelca a la
+  terminal *y* actualiza el modelo interno que ncurses tiene de la pantalla
+  física, así que el segundo `refresh()` ve el panel como contenido que sobra y
+  lo repinta con la ventana de abajo. Con la ayuda dibujada antes del
+  `stdscr.refresh()`, `h` no mostraba absolutamente nada; dibujándola después
+  aparecía pero parpadeando en cada frame. `noutrefresh()` sólo toca el buffer
+  virtual y `doupdate()` compone todo en una única escritura física, que es
+  exactamente el mecanismo que curses ofrece para superponer ventanas sin
+  parpadeo.
+- **La ayuda entra en 24×80 y se cierra con cualquier tecla.** Está en dos
+  columnas (21×68 con el marco) porque en una sola columna se pasaba de 24
+  filas y el recorte se comía justo la línea que explica cómo cerrarla. Y la
+  primera tecla que se aprieta la cierra y se consume ahí, en vez de cambiar
+  de vista por detrás del overlay.
 - **Layout 45/55 (lista/detalle):** la lista de procesos queda siempre visible,
   cualquiera sea la vista activa, como pide la consigna; el panel de detalle se
   lleva la mayoría del espacio vertical porque es donde vive la información
@@ -682,7 +718,7 @@ librería como `psutil` te habría "limpiado" sin que te enteres.
   (`display`) y qué hace el loop principal con el tiempo que antes usaba para
   el teclado. El loop de daemon procesa igual el self-pipe, así que las 5
   señales siguen funcionando sin TUI.
-- **Tests unitarios** (48, en `tests/`): sobre fixtures de texto estáticos y
+- **Tests unitarios** (53, en `tests/`): sobre fixtures de texto estáticos y
   sobre el estado de la TUI, sin depender de `/proc` real ni de privilegios.
   Incluyen un test de regresión del piso de intervalos que SIGHUP no respetaba.
 - **Comparación de PID namespaces** (`monitor-aislado` en `docker-compose.yml`):
