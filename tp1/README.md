@@ -40,11 +40,20 @@ para pintar las 7 vistas.
 **Uso básico:**
 
 ```bash
-docker compose up --build
+docker compose build          # una vez (o cuando cambies el código)
+docker compose run --rm monitor
 ```
 
-Eso abre la TUI directamente en la terminal (el contenedor es interactivo:
-`tty: true`, `stdin_open: true`).
+Eso abre la TUI directamente en la terminal, con el teclado conectado.
+
+**Importante: `docker compose run`, no `docker compose up`.** `up` multiplexa
+los logs de los servicios hacia tu pantalla, pero no conecta tu teclado con el
+contenedor — vas a ver la interfaz perfecta y ninguna tecla va a hacer nada.
+`run` sí engancha stdin/stdout de tu terminal con el contenedor, que es lo que
+necesita `curses` para funcionar. `up` sigue sirviendo para built-and-start en
+background (`docker compose up -d --build`) o simplemente para reconstruir la
+imagen, pero para usar la TUI siempre es `run`. Ver §6 para más detalle y para
+cómo salir.
 
 | Tecla | Acción |
 |---|---|
@@ -327,8 +336,8 @@ de qué es un PID namespace: la misma imagen, el mismo código leyendo el mismo
 `/proc`, y dos realidades distintas según en qué namespace corra.
 
 ```bash
-docker compose up --build                        # ve el host (~cientos de procesos)
-docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
+docker compose run --rm monitor              # ve el host (~cientos de procesos)
+docker compose run --rm monitor-aislado      # ve sólo los 11 propios
 ```
 
 ---
@@ -486,10 +495,28 @@ docker compose run --rm monitor-aislado          # ve sólo los ~10 propios
 ```bash
 git clone https://github.com/maxinavesi1/computacion2-2026.git
 cd computacion2-2026/tp1
-docker compose up --build
+docker compose build
+docker compose run --rm monitor
 ```
 
-Un solo comando, como pide la consigna. Para salir: tecla `q`, o `Ctrl+C`.
+**Por qué `run` y no `up`.** `docker compose up` (con o sin `--build`) es el
+comando pensado para levantar una pila de servicios en segundo plano o
+seguirles los logs: no conecta el teclado de tu terminal con el contenedor,
+aunque el servicio tenga `tty: true` y `stdin_open: true`. Corriéndolo así vas
+a ver la TUI dibujarse perfecto y **ninguna tecla va a hacer nada**, porque
+nunca llegan a `curses`. `docker compose run` en cambio arranca un único
+contenedor con tu terminal enganchada de verdad (stdin, stdout y el tamaño de
+la ventana), que es lo que la TUI necesita para leer teclado. `--rm` borra el
+contenedor al salir, para no acumular copias viejas.
+
+**Cómo salir:** tecla `q` (shutdown limpio: los 11 procesos se cierran en
+orden y el contenedor termina solo), o `Ctrl+C` en esa misma terminal (manda
+`SIGINT`, que el monitor maneja igual de prolijo — ver §3.4). Con cualquiera
+de las dos volvés al prompt de tu shell.
+
+Si en algún momento corriste esto con `docker compose up` por error y quedó un
+contenedor `tp1-monitor` dando vueltas sin que puedas escribirle, pará todo con
+`docker compose down` desde otra terminal y volvé a levantarlo con `run`.
 
 ### Ver la diferencia de PID namespace
 
@@ -497,7 +524,7 @@ Un solo comando, como pide la consigna. Para salir: tecla `q`, o `Ctrl+C`.
 docker compose run --rm monitor-aislado
 ```
 
-El mismo monitor sin `pid: host` ni `SYS_PTRACE`: sólo ve sus propios ~10
+El mismo monitor sin `pid: host` ni `SYS_PTRACE`: sólo ve sus propios 11
 procesos. Ver §3.6.
 
 ### Modo daemon (sin TUI, bonus — §10)
