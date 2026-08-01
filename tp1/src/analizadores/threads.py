@@ -2,22 +2,24 @@
 Analizador "threads": lista de LWPs (light-weight processes, o sea threads a
 nivel del kernel) de cada proceso, vía /proc/<pid>/task/<tid>/.
 
-El historial de CPU% se guarda por (pid, tid) en vez de sólo por pid, porque
-cada thread tiene su propio utime/stime independiente del resto.
+El historial de CPU% se guarda por thread y no por proceso, porque cada thread
+tiene su propio utime/stime independiente del resto. La clave incluye además el
+starttime del thread, por el mismo motivo que en los demás analizadores: los
+TIDs salen del mismo espacio de números que los PIDs y también se reusan (ver
+procfs.clave_proceso).
 """
 
 import time
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 
-def _extraer(historial, cfg, verbose, pids_proxy):
+def _extraer(historial, cfg, verbose, log, pids_proxy):
     pids = list(pids_proxy)
     ahora = time.time()
-    resultado = {}
     claves_vistas = set()
 
-    for pid in pids:
+    def uno(pid):
         tids = procfs.list_tids(pid)
         threads_de_este_pid = []
 
@@ -28,7 +30,7 @@ def _extraer(historial, cfg, verbose, pids_proxy):
             status = procfs.read_status(pid, tid)
             comm = procfs.read_comm(pid, tid)
 
-            clave = (pid, tid)
+            clave = (pid, procfs.clave_proceso(tid, stat))
             claves_vistas.add(clave)
             jiffies_actuales = stat["utime"] + stat["stime"]
             prev = historial.get(clave)
@@ -57,8 +59,11 @@ def _extraer(historial, cfg, verbose, pids_proxy):
                 fila["stime"] = stat.get("stime", 0)
             threads_de_este_pid.append(fila)
 
-        if tids:  # sólo incluir el pid si pudimos leer al menos un thread suyo
-            resultado[pid] = threads_de_este_pid
+        if not threads_de_este_pid:
+            return None  # no pudimos leer ningún thread suyo: el proceso ya no está
+        return pid, threads_de_este_pid
+
+    resultado = por_pid(pids, uno, log)
 
     # purgar historial de threads que ya no existen
     for clave_vieja in list(historial.keys()):

@@ -168,6 +168,33 @@ class TestTipoFd(unittest.TestCase):
                 self.assertEqual(procfs._tipo_fd(destino), esperado)
 
 
+class TestClaveProceso(unittest.TestCase):
+    """
+    Linux reusa los PIDs. Si el historial de CPU% se indexara sólo por PID, un
+    proceso nuevo que hereda el PID de uno muerto calcularía su delta contra
+    los jiffies del anterior.
+    """
+
+    def test_incluye_el_starttime(self):
+        stat = procfs.parse_stat(_leer_fixture("stat_comm_raro.txt"))
+        self.assertEqual(procfs.clave_proceso(stat["pid"], stat), (1234, stat["starttime"]))
+
+    def test_mismo_pid_distinto_starttime_son_procesos_distintos(self):
+        viejo = {"starttime": 500}
+        nuevo = {"starttime": 99999}     # mismo PID reciclado más tarde
+        self.assertNotEqual(procfs.clave_proceso(1234, viejo),
+                            procfs.clave_proceso(1234, nuevo))
+
+    def test_el_starttime_sale_del_campo_22_de_stat(self):
+        stat = procfs.parse_stat(_leer_fixture("stat_comm_raro.txt"))
+        campos = _leer_fixture("stat_comm_raro.txt").split(")")[-1].split()
+        # campo 22 del proc(5); el índice 19 de lo que sigue al ')' (que es el campo 3)
+        self.assertEqual(stat["starttime"], int(campos[19]))
+
+    def test_stat_sin_starttime_no_explota(self):
+        self.assertEqual(procfs.clave_proceso(7, {}), (7, 0))
+
+
 class TestCalcularCpuPct(unittest.TestCase):
     def test_delta_cero_da_cero_por_ciento(self):
         self.assertEqual(procfs.calcular_cpu_pct(100, 100, 0.0, 1.0), 0.0)

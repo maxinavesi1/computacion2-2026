@@ -60,9 +60,20 @@ _ERRORS_ESPERADOS = (FileNotFoundError, ProcessLookupError, PermissionError, Not
 
 
 def _read(path):
-    """Lee un archivo de /proc como texto completo. None si falla (proceso murió, sin permisos, etc.)."""
+    """
+    Lee un archivo de /proc como texto completo. None si falla (proceso murió,
+    sin permisos, etc.).
+
+    `errors="replace"`: el kernel no garantiza que el contenido sea UTF-8
+    válido. El caso concreto es `cmdline` y `comm`, que son bytes crudos del
+    argv/nombre del proceso, y nada impide que un proceso tenga bytes
+    arbitrarios ahí. Sin esto, `f.read()` levanta UnicodeDecodeError —que sí se
+    atrapa más abajo, porque hereda de ValueError— y perderíamos el archivo
+    ENTERO por un byte raro. Con replace mostramos el comando con un carácter
+    de reemplazo, que es lo que hace `ps`, y no perdemos la fila.
+    """
     try:
-        with open(path, "r") as f:
+        with open(path, "r", errors="replace") as f:
             return f.read()
     except _ERRORS_ESPERADOS:
         return None
@@ -570,6 +581,26 @@ def read_uptime():
 # ---------------------------------------------------------------------------
 # Helpers de cálculo (CPU%, etc.) — puros, sin tocar /proc
 # ---------------------------------------------------------------------------
+
+def clave_proceso(pid, stat):
+    """
+    Identidad estable de un proceso: (pid, starttime).
+
+    El PID solo no alcanza como clave del historial de CPU%. Linux reusa los
+    PIDs (dan la vuelta en /proc/sys/kernel/pid_max), así que un proceso nuevo
+    puede heredar el PID de uno que acaba de morir. Si el historial estuviera
+    indexado sólo por PID, el delta de jiffies se calcularía contra los del
+    proceso viejo. Hoy eso da un delta negativo que `calcular_cpu_pct` recorta
+    a 0.0 —o sea que se ve un 0% espurio por un ciclo, no un número absurdo—,
+    pero con starttime en la clave directamente no ocurre: el proceso nuevo no
+    matchea ninguna entrada y arranca su historial de cero, que es lo correcto.
+
+    `starttime` (campo 22 de stat) es el instante de arranque del proceso en
+    jiffies desde el boot: no cambia nunca durante la vida del proceso y dos
+    procesos con el mismo PID no pueden tener el mismo.
+    """
+    return (pid, stat.get("starttime", 0))
+
 
 def calcular_cpu_pct(jiffies_prev, jiffies_curr, wall_prev, wall_curr):
     """

@@ -23,6 +23,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "src"))
 
 import display  # noqa: E402
 import vistas  # noqa: E402
+from analizadores import _base  # noqa: E402
 from analizadores import fds as an_fds  # noqa: E402
 
 
@@ -230,16 +231,247 @@ class TestListaYPin(unittest.TestCase):
     def test_enter_pinea_y_despinea_el_seleccionado(self):
         estado = display.EstadoUI()
         estado._ultimo_orden_pids = [11, 22, 33]
-        estado.seleccion = 1
-        _apretar(estado, 10)                      # Enter
+        _apretar(estado, display.curses.KEY_DOWN)   # baja a la fila 1 -> pid 22
+        self.assertEqual(estado.pid_seleccionado, 22)
+        _apretar(estado, 10)                        # Enter
         self.assertEqual(estado.pid_pineado, 22)
-        _apretar(estado, 10)                      # Enter otra vez: toggle
+        _apretar(estado, 10)                        # Enter otra vez: toggle
         self.assertIsNone(estado.pid_pineado)
+
+    def test_pinear_no_desplaza_la_seleccion_a_otro_proceso(self):
+        """
+        Regresión del bug del pin. Con la selección anclada al índice, pinear
+        movía la fila al tope pero el índice se quedaba quieto: el detalle
+        pasaba a mostrar otro proceso y el segundo Enter pineaba a ese otro en
+        vez de despinear.
+        """
+        snap = self._snapshot([
+            self._fila(10, cpu=9.0), self._fila(20, cpu=5.0), self._fila(30, cpu=3.0),
+        ])
+        estado = display.EstadoUI()
+
+        # frame 1: la lista sale ordenada por cpu y el usuario baja hasta el 30
+        filas, _ = display._obtener_lista_procesos(snap, estado)
+        estado._ultimo_orden_pids = [f["pid"] for f in filas]
+        display._reanclar_seleccion(estado, estado._ultimo_orden_pids)
+        _apretar(estado, display.curses.KEY_DOWN)
+        _apretar(estado, display.curses.KEY_DOWN)
+        self.assertEqual(estado.pid_seleccionado, 30)
+
+        # pinea el 30
+        _apretar(estado, 10)
+        self.assertEqual(estado.pid_pineado, 30)
+
+        # frame 2: el 30 salta al tope y la selección tiene que seguirlo
+        filas, _ = display._obtener_lista_procesos(snap, estado)
+        estado._ultimo_orden_pids = [f["pid"] for f in filas]
+        display._reanclar_seleccion(estado, estado._ultimo_orden_pids)
+        self.assertEqual(estado._ultimo_orden_pids[0], 30, "el pineado va primero")
+        self.assertEqual(estado.seleccion, 0, "la barra siguió al proceso pineado")
+        self.assertEqual(estado.pid_seleccionado, 30, "el detalle muestra el pineado")
+
+        # y ahora el segundo Enter SÍ despinea
+        _apretar(estado, 10)
+        self.assertIsNone(estado.pid_pineado)
+
+    def test_la_seleccion_sigue_al_proceso_aunque_cambie_el_orden(self):
+        """
+        Con orden por CPU% la lista se reordena sola en cada refresco. La barra
+        tiene que quedarse sobre el mismo proceso, no sobre la misma fila.
+        """
+        estado = display.EstadoUI()
+        snap = self._snapshot([self._fila(10, cpu=9.0), self._fila(20, cpu=1.0)])
+        filas, _ = display._obtener_lista_procesos(snap, estado)
+        estado._ultimo_orden_pids = [f["pid"] for f in filas]
+        display._reanclar_seleccion(estado, estado._ultimo_orden_pids)
+        _apretar(estado, display.curses.KEY_DOWN)
+        self.assertEqual(estado.pid_seleccionado, 20)
+
+        # el 20 pega un pico y pasa a estar primero
+        snap = self._snapshot([self._fila(10, cpu=1.0), self._fila(20, cpu=9.0)])
+        filas, _ = display._obtener_lista_procesos(snap, estado)
+        display._reanclar_seleccion(estado, [f["pid"] for f in filas])
+        self.assertEqual(estado.pid_seleccionado, 20, "no saltó al otro proceso")
+        self.assertEqual(estado.seleccion, 0, "el índice se recalculó solo")
+
+    def test_cambiar_de_vista_mantiene_el_proceso_seleccionado(self):
+        estado = display.EstadoUI()
+        estado._ultimo_orden_pids = [11, 22, 33]
+        _apretar(estado, display.curses.KEY_DOWN)
+        _apretar(estado, "2")   # a la vista Memoria
+        self.assertEqual(estado.vista_actual, "memoria")
+        self.assertEqual(estado.pid_seleccionado, 22)
+
+    def test_si_muere_el_proceso_seleccionado_la_seleccion_no_explota(self):
+        estado = display.EstadoUI()
+        estado.pid_seleccionado = 999
+        estado.seleccion = 5
+        display._reanclar_seleccion(estado, [11, 22])
+        self.assertEqual(estado.seleccion, 1)
+        self.assertEqual(estado.pid_seleccionado, 22)
+
+    def test_lista_vacia_no_explota(self):
+        estado = display.EstadoUI()
+        estado.pid_seleccionado = 42
+        display._reanclar_seleccion(estado, [])
+        self.assertEqual(estado.seleccion, 0)
+        self.assertIsNone(estado.pid_seleccionado)
 
     def test_navegacion_no_baja_de_cero(self):
         estado = display.EstadoUI()
+        estado._ultimo_orden_pids = [11, 22]
         _apretar(estado, display.curses.KEY_UP)
         self.assertEqual(estado.seleccion, 0)
+
+    def test_navegacion_no_pasa_del_final(self):
+        estado = display.EstadoUI()
+        estado._ultimo_orden_pids = [11, 22]
+        for _ in range(10):
+            _apretar(estado, display.curses.KEY_DOWN)
+        self.assertEqual(estado.seleccion, 1)
+        self.assertEqual(estado.pid_seleccionado, 22)
+
+
+class TestLayout(unittest.TestCase):
+    """
+    Regresión del panel de detalle recortado. Con un reparto 45/55 fijo, en una
+    terminal estándar de 24 filas al detalle le quedaban 10 filas útiles y la
+    vista Señales necesita 11: la última máscara (ShdPnd) terminaba debajo del
+    pie de página, invisible.
+    """
+
+    # Lo que ocupa cada panel de detalle, contado sobre el código de display.py
+    NECESITA = {"senales": 11, "sistema": 11, "resumen": 5, "scheduling": 6}
+
+    def _filas_utiles_de_detalle(self, alto):
+        alto_lista = display._alto_de_lista(alto)
+        inicio_detalle = 3 + alto_lista + 1
+        # _dibujar_detalle gasta su primera fila en la línea de "=", y la última
+        # fila de la pantalla es el pie
+        return alto - inicio_detalle - 1 - 1
+
+    def test_en_24_filas_entran_todos_los_paneles(self):
+        utiles = self._filas_utiles_de_detalle(24)
+        for vista, necesita in self.NECESITA.items():
+            with self.subTest(vista=vista):
+                self.assertGreaterEqual(
+                    utiles, necesita,
+                    f"la vista {vista} necesita {necesita} filas y hay {utiles}")
+
+    def test_la_lista_nunca_queda_sin_espacio(self):
+        for alto in range(10, 60):
+            with self.subTest(alto=alto):
+                self.assertGreaterEqual(display._alto_de_lista(alto), display._LISTA_MIN)
+
+    def test_en_terminales_grandes_vuelve_al_reparto_nominal(self):
+        # con espacio de sobra la lista se lleva ~45%, no el mínimo
+        self.assertEqual(display._alto_de_lista(50), int((50 - 5) * 0.45))
+
+    def test_el_detalle_nunca_invade_el_pie(self):
+        for alto in range(20, 60):
+            with self.subTest(alto=alto):
+                alto_lista = display._alto_de_lista(alto)
+                inicio_detalle = 3 + alto_lista + 1
+                self.assertLess(inicio_detalle, alto - 1)
+
+
+class TestPie(unittest.TestCase):
+    """
+    Regresión: el pie medía 103 caracteres y en una terminal de 80 columnas se
+    cortaba en "+/- interva", escondiendo `h ayuda` y `q salir`.
+    """
+
+    def _elegido(self, ancho):
+        presupuesto = max(0, ancho - 1)
+        return next((p for p in display._PIES if len(p) <= presupuesto), display._PIES[-1])
+
+    def test_en_80_columnas_se_ven_ayuda_y_salir(self):
+        pie = self._elegido(80)
+        self.assertLessEqual(len(pie), 79)
+        self.assertIn("h ayuda", pie)
+        self.assertIn("q salir", pie)
+
+    def test_todos_los_anchos_razonables_conservan_como_salir(self):
+        for ancho in range(20, 200):
+            with self.subTest(ancho=ancho):
+                self.assertIn("q salir", self._elegido(ancho))
+
+    def test_en_terminal_ancha_usa_la_version_completa(self):
+        self.assertEqual(self._elegido(200), display._PIES[0])
+
+    def test_las_variantes_estan_ordenadas_de_mas_larga_a_mas_corta(self):
+        largos = [len(p) for p in display._PIES]
+        self.assertEqual(largos, sorted(largos, reverse=True))
+
+
+class TestFiltrosDefault(unittest.TestCase):
+    def test_se_aplican_en_el_primer_frame(self):
+        # Regresión: había un `if seq != 0` que salteaba justo el primer frame,
+        # así que filtros_default de config.json se ignoraba hasta un SIGHUP.
+        estado = display.EstadoUI()
+        control = {"reload_seq": 0,
+                   "filtros_default": {"comando": "python", "usuario": "root"}}
+        display._revisar_reload(estado, control)
+        self.assertEqual(estado.filtro_comando, "python")
+        self.assertEqual(estado.filtro_usuario, "root")
+
+    def test_no_se_reaplican_en_cada_frame(self):
+        # si el usuario cambia el filtro a mano, los frames siguientes no lo pisan
+        estado = display.EstadoUI()
+        control = {"reload_seq": 0, "filtros_default": {"comando": "python", "usuario": ""}}
+        display._revisar_reload(estado, control)
+        estado.filtro_comando = "otra-cosa"
+        display._revisar_reload(estado, control)
+        self.assertEqual(estado.filtro_comando, "otra-cosa")
+
+    def test_un_sighup_vuelve_a_aplicarlos(self):
+        estado = display.EstadoUI()
+        control = {"reload_seq": 0, "filtros_default": {"comando": "python", "usuario": ""}}
+        display._revisar_reload(estado, control)
+        estado.filtro_comando = "otra-cosa"
+        control["reload_seq"] = 1
+        control["filtros_default"] = {"comando": "bash", "usuario": ""}
+        display._revisar_reload(estado, control)
+        self.assertEqual(estado.filtro_comando, "bash")
+
+
+class TestAislamientoPorPid(unittest.TestCase):
+    """
+    `por_pid` existe para que un PID problemático no cueste la vuelta entera:
+    sin él, la excepción sube a run_loop, que descarta el dict completo y deja
+    la vista congelada con el snapshot viejo.
+    """
+
+    def test_un_pid_que_falla_no_tira_el_resto(self):
+        def fn(pid):
+            if pid == 2:
+                raise RuntimeError("boom")
+            return pid, {"pid": pid}
+
+        resultado = _base.por_pid([1, 2, 3], fn)
+        self.assertEqual(sorted(resultado), [1, 3])
+
+    def test_none_saltea_sin_contarlo_como_error(self):
+        errores = []
+        resultado = _base.por_pid([1, 2], lambda p: None, errores.append)
+        self.assertEqual(resultado, {})
+        self.assertEqual(errores, [])
+
+    def test_los_errores_se_loguean_pero_con_tope(self):
+        def fn(pid):
+            raise RuntimeError("boom")
+
+        mensajes = []
+        _base.por_pid(list(range(20)), fn, mensajes.append)
+        # 3 errores concretos + 1 línea de resumen
+        self.assertEqual(len(mensajes), _base._MAX_ERRORES_LOGUEADOS + 1)
+        self.assertIn("17 pids más", mensajes[-1])
+
+    def test_sin_logger_no_explota(self):
+        def fn(pid):
+            raise RuntimeError("boom")
+
+        self.assertEqual(_base.por_pid([1, 2], fn), {})
 
 
 class TestAyuda(unittest.TestCase):

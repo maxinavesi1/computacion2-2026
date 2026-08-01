@@ -20,12 +20,12 @@ en contraste con el Manager.dict que se usa para las estructuras variables.
 
 import time
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 _ESTADOS_RELEVANTES = ("R", "S", "D", "T", "Z", "I")
 
 
-def _extraer(historial, cfg, verbose, pids_proxy, top3_cpu_arr, top3_mem_arr):
+def _extraer(historial, cfg, verbose, log, pids_proxy, top3_cpu_arr, top3_mem_arr):
     pids = list(pids_proxy)
     ahora = time.time()
 
@@ -61,32 +61,37 @@ def _extraer(historial, cfg, verbose, pids_proxy, top3_cpu_arr, top3_mem_arr):
     hist_cpu = historial.setdefault("_cpu_por_pid", {})
     vistos = set()
 
-    for pid in pids:
+    def uno(pid):
+        nonlocal procesos_totales, threads_totales
         stat = procfs.read_stat(pid)
         if stat is None:
-            continue
+            return None
         procesos_totales += 1
         estado = stat["state"]
         conteo_estados[estado] = conteo_estados.get(estado, 0) + 1
         threads_totales += stat.get("num_threads", 1)
 
         jiffies_actuales = stat["utime"] + stat["stime"]
-        vistos.add(pid)
-        prev = hist_cpu.get(pid)
+        clave = procfs.clave_proceso(pid, stat)
+        vistos.add(clave)
+        prev = hist_cpu.get(clave)
         cpu_pid_pct = 0.0
         if prev is not None:
             jiffies_prev, wall_prev = prev
             cpu_pid_pct = procfs.calcular_cpu_pct(jiffies_prev, jiffies_actuales, wall_prev, ahora)
-        hist_cpu[pid] = (jiffies_actuales, ahora)
+        hist_cpu[clave] = (jiffies_actuales, ahora)
         candidatos_cpu.append((cpu_pid_pct, pid, stat["comm"]))
 
         status = procfs.read_status(pid)
         rss = status.get("VmRSS", 0) if status else 0
         candidatos_mem.append((rss, pid, stat["comm"]))
+        return None  # este analizador acumula en listas propias, no arma un dict por pid
 
-    for pid_viejo in list(hist_cpu.keys()):
-        if pid_viejo not in vistos:
-            del hist_cpu[pid_viejo]
+    por_pid(pids, uno, log)
+
+    for clave_vieja in list(hist_cpu.keys()):
+        if clave_vieja not in vistos:
+            del hist_cpu[clave_vieja]
 
     candidatos_cpu.sort(reverse=True)
     candidatos_mem.sort(reverse=True)

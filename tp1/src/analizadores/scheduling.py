@@ -14,20 +14,19 @@ alternativa que ofrece la consigna simplemente no existe.
 """
 
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 
-def _extraer(historial, cfg, verbose, pids_proxy):
+def _extraer(historial, cfg, verbose, log, pids_proxy):
     pids = list(pids_proxy)
-    resultado = {}
 
-    for pid in pids:
+    def uno(pid):
         stat = procfs.read_stat(pid)
         status = procfs.read_status(pid)
         if stat is None:
-            continue
+            return None
 
-        resultado[pid] = {
+        return pid, {
             "pid": pid,
             "nice": stat.get("nice", 0),
             "priority": stat.get("priority", 0),
@@ -42,7 +41,8 @@ def _extraer(historial, cfg, verbose, pids_proxy):
             "sid": stat.get("session", 0),
             "pgid": stat.get("pgrp", 0),
         }
-    return resultado
+
+    return por_pid(pids, uno, log)
 
 
 def run(pids_proxy, snapshot, interval_value, stop_event, log_queue, **kwargs):

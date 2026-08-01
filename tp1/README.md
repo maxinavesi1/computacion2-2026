@@ -40,20 +40,23 @@ para pintar las 7 vistas.
 **Uso básico:**
 
 ```bash
-docker compose build          # una vez (o cuando cambies el código)
+docker compose up -d --build     # levanta los 11 procesos
+docker attach tp1-monitor        # engancha el teclado a la TUI
+```
+
+Son dos pasos y no uno por una limitación de Docker Compose, no del monitor:
+`docker compose up` conecta la salida del contenedor a tu pantalla pero **no**
+tu teclado a su stdin, aunque el servicio declare `tty: true` y
+`stdin_open: true`. Con `up` a secas la TUI se dibuja perfecta y ninguna tecla
+hace nada. `docker attach` es el comando que engancha la terminal completa.
+
+Como atajo equivalente en un solo comando:
+
+```bash
 docker compose run --rm monitor
 ```
 
-Eso abre la TUI directamente en la terminal, con el teclado conectado.
-
-**Importante: `docker compose run`, no `docker compose up`.** `up` multiplexa
-los logs de los servicios hacia tu pantalla, pero no conecta tu teclado con el
-contenedor — vas a ver la interfaz perfecta y ninguna tecla va a hacer nada.
-`run` sí engancha stdin/stdout de tu terminal con el contenedor, que es lo que
-necesita `curses` para funcionar. `up` sigue sirviendo para built-and-start en
-background (`docker compose up -d --build`) o simplemente para reconstruir la
-imagen, pero para usar la TUI siempre es `run`. Ver §6 para más detalle y para
-cómo salir.
+Ver §6 para el detalle y para cómo salir.
 
 | Tecla | Acción |
 |---|---|
@@ -444,10 +447,19 @@ docker compose run --rm monitor-aislado      # ve sólo los 11 propios
   en la vuelta siguiente de ese analizador. Lo mismo pasa si un PID
   desaparece transitoriamente de una vuelta: se purga su historial y el
   siguiente cálculo arranca de cero.
-- **Terminal chica:** con menos de ~20 líneas o ~80 columnas los paneles de
-  detalle se recortan. Uso `addnstr` para no crashear, pero el contenido se
-  corta y no implementé scroll horizontal ni vertical en el panel de detalle
-  (sí en la lista de procesos).
+- **Terminal chica.** El reparto entre lista y detalle es adaptativo (§8), así
+  que a partir de 24 filas —el tamaño estándar— entran completos todos los
+  paneles, incluido el de Señales, que es el más alto. Por debajo de eso el
+  detalle empieza a recortarse: a 20 filas le falta una fila para la última
+  máscara, porque la lista de procesos ya está en su mínimo de 4 y no hay de
+  dónde sacar más. Uso `addnstr` para que nunca crashee, pero **no implementé
+  scroll en el panel de detalle**; la lista de procesos sí scrollea con las
+  flechas. El pie de página elige entre varias versiones según el ancho para no
+  perder `h ayuda` y `q salir` en 80 columnas.
+- **Listas largas de señales se cortan a lo ancho.** El `SigBlk` de un proceso
+  como `systemd` no entra en 80 columnas y se trunca a mitad de un nombre. Es
+  dato, no navegación, así que preferí truncar antes que meter scroll
+  horizontal.
 - **Escalabilidad: lectura duplicada y volumen de FDs.** Como cada analizador
   es autónomo y lee lo que necesita, hay archivos que se abren varias veces por
   ciclo: `/proc/<pid>/status` lo leen **5** analizadores (resumen, memoria,
@@ -495,28 +507,36 @@ docker compose run --rm monitor-aislado      # ve sólo los 11 propios
 ```bash
 git clone https://github.com/maxinavesi1/computacion2-2026.git
 cd computacion2-2026/tp1
-docker compose build
+docker compose up -d --build     # levanta los 11 procesos
+docker attach tp1-monitor        # engancha el teclado a la TUI
+```
+
+**Por qué hacen falta dos comandos.** La consigna pide `docker compose up
+--build` como comando único, y eso levanta todo correctamente. Lo que `up` no
+hace es conectar **tu teclado** al stdin del contenedor: adjunta la salida para
+mostrarte los logs, pero no la entrada, aunque el servicio declare `tty: true`
+y `stdin_open: true` (que están puestos y son necesarios: sin ellos no habría
+un TTY que adjuntar). Con `up` a secas la TUI se dibuja perfecta y ninguna
+tecla llega a `curses`. `docker attach` completa lo que falta.
+
+Alternativa equivalente en un solo comando, si no importa usar `up`:
+
+```bash
 docker compose run --rm monitor
 ```
 
-**Por qué `run` y no `up`.** `docker compose up` (con o sin `--build`) es el
-comando pensado para levantar una pila de servicios en segundo plano o
-seguirles los logs: no conecta el teclado de tu terminal con el contenedor,
-aunque el servicio tenga `tty: true` y `stdin_open: true`. Corriéndolo así vas
-a ver la TUI dibujarse perfecto y **ninguna tecla va a hacer nada**, porque
-nunca llegan a `curses`. `docker compose run` en cambio arranca un único
-contenedor con tu terminal enganchada de verdad (stdin, stdout y el tamaño de
-la ventana), que es lo que la TUI necesita para leer teclado. `--rm` borra el
-contenedor al salir, para no acumular copias viejas.
+`run` arranca un contenedor con la terminal enganchada de entrada y salida
+desde el principio. `--rm` lo borra al salir.
 
-**Cómo salir:** tecla `q` (shutdown limpio: los 11 procesos se cierran en
-orden y el contenedor termina solo), o `Ctrl+C` en esa misma terminal (manda
-`SIGINT`, que el monitor maneja igual de prolijo — ver §3.4). Con cualquiera
-de las dos volvés al prompt de tu shell.
+**Cómo salir:** tecla `q` (shutdown limpio: los 11 procesos se cierran en orden
+y el contenedor termina solo), o `Ctrl+C`, que manda `SIGINT` y el monitor
+maneja igual de prolijo (ver §3.4). Si usaste `up -d`, después de salir podés
+limpiar con `docker compose down`.
 
-Si en algún momento corriste esto con `docker compose up` por error y quedó un
-contenedor `tp1-monitor` dando vueltas sin que puedas escribirle, pará todo con
-`docker compose down` desde otra terminal y volvé a levantarlo con `run`.
+> `docker attach` necesita que **tu** terminal sea un TTY. Si lo corrés desde
+> un pipe o desde un panel que no es una terminal real (por ejemplo la vista de
+> logs de la extensión de Docker para VS Code), falla con
+> `the input device is not a TTY`. Usá una terminal común.
 
 ### Ver la diferencia de PID namespace
 
@@ -562,45 +582,61 @@ importa `pwd`/`grp`:
 docker compose run --rm monitor python3 -m unittest discover -s tests -v
 ```
 
-**53 tests** en dos archivos:
+**78 tests** en dos archivos:
 
-- `tests/test_procfs.py` (23): parseo de `stat` —incluyendo el caso límite de
+- `tests/test_procfs.py` (27): parseo de `stat` —incluyendo el caso límite de
   un `comm` con espacios y paréntesis propios—, de `status`, de `maps` y su
   agrupamiento por categoría, decodificación de máscaras de señales (con las
-  internas de glibc y las RT) y cálculo de CPU%.
-- `tests/test_ui.py` (30): la tabla de vistas contra los valores de la
-  consigna, el mapeo de las 14 teclas de vista, el clamp de intervalos
-  (incluida la regresión del piso que no respetaba SIGHUP), el ciclo de orden,
-  los filtros con su cancelación por ESC, el pin manteniéndose primero pese a
-  cambiar el criterio de ordenamiento, y el overlay de ayuda (que cierre con
-  cualquier tecla y que no crezca más allá de una terminal de 24 filas).
+  internas de glibc y las RT), la clave `(pid, starttime)` que evita confundir
+  procesos cuando el kernel reusa un PID, y el cálculo de CPU%.
+- `tests/test_ui.py` (51): la tabla de vistas contra los valores de la
+  consigna, el mapeo de las 14 teclas de vista, el clamp de intervalos, el
+  ciclo de orden, los filtros con su cancelación por ESC, el overlay de ayuda,
+  el reparto adaptativo lista/detalle, la elección del pie según el ancho, el
+  aislamiento de errores por PID, y la selección anclada al proceso.
+
+Varios son tests de regresión de bugs concretos que aparecieron probando y que
+están documentados donde se arreglaron: el piso de intervalos que SIGHUP no
+respetaba, el pin que desplazaba la selección a otro proceso, los filtros de
+`config.json` que se ignoraban al arrancar, el panel de ayuda que no entraba en
+24 filas, y el pie que se cortaba en 80 columnas.
 
 ### Qué se verificó y cómo
 
 | Verificación | Resultado |
 |---|---|
-| 53 tests unitarios (Linux nativo y dentro del contenedor) | OK |
+| 78 tests unitarios (Linux nativo y dentro del contenedor) | OK |
 | `list_pids()` contra `ps -e` | 34 = 34, coinciden exactamente |
 | Campos 5/6 de `stat` contra `ps -o pgid,sid` | coinciden (ver el docstring de `procfs.py`) |
 | `grep -i nice /proc/self/status` | 0 coincidencias: el campo no existe |
-| Sistema completo en modo daemon | 9 hijos, shutdown limpio, 0 huérfanos |
+| Sistema completo en modo daemon | 10 hijos, shutdown limpio, 0 huérfanos |
 | SIGUSR1 | dump de ~143 KB, JSON válido, 7 claves |
 | SIGHUP | los 7 analizadores lo registran en el mismo segundo |
 | SIGUSR2 | las 7 vistas pasan a `verbose: true` en < 1 s |
 | `read_fds` con permisos ajenos | 30 de 46 pids devuelven `SIN_PERMISO`, ninguno confundido con "murió" |
-| `docker compose build` | OK |
+| `docker compose up -d --build` + `docker attach` | la TUI recibe las teclas; `q` deja el contenedor en `exited` |
 | terminfo en el contenedor | 1844 entradas; `setupterm` OK en 12 TERM distintos |
 | `pid: host` vs `monitor-aislado` | 24 procesos y 2 usuarios vs 12 procesos y 1 usuario |
-| Arranque de la TUI y las 14 teclas de vista | las 7 vistas pintan barra y panel de detalle |
-| `+`/`-`, `c`, `/`, `↑↓`, `Enter`, `h`, `q` | todas responden; `q` sale con código 0 y 0 huérfanos |
+| Las 7 vistas renderizadas a 24×80 | capturadas con `tmux capture-pane`, ver §7 |
+| Vista Señales a 24×80 | las 5 máscaras entran completas |
+| Vista Sistema a 24×80 | Boot time y los dos Top 3 completos |
+| Salida con `q` desde la TUI | código 0, 0 procesos huérfanos |
 
-La TUI la verifiqué de dos maneras. Los 30 tests de `test_ui.py` cubren la
-lógica de teclado sobre `EstadoUI` sin abrir curses. Además la corrí de verdad
-bajo una pseudo-terminal de 24×100 (módulo `pty` de la stdlib), mandándole
-teclas y leyendo la salida a través de un emulador VT100 para poder afirmar qué
-quedaba efectivamente en pantalla en cada paso. Ese arnés vive fuera del repo
-porque depende de una librería que no es del TP, pero fue lo que hizo aparecer
-el bug del panel de ayuda que se describe en §8.
+**Cómo verifiqué el dibujado, que fue lo más difícil.** El primer intento fue
+buscar los títulos de vista en la salida cruda de una pseudo-terminal, y daba
+falso negativo en 6 de las 7 vistas: ncurses hace repintado **diferencial**, o
+sea que al pasar de "Resumen" a "Memoria" sólo reescribe los caracteres que
+difieren, y el literal `vista: Memoria` nunca aparece entero en el stream. El
+segundo intento fue escribir un intérprete de secuencias ANSI a mano para
+reconstruir la grilla, y tampoco alcanzó: sin manejar scroll regions ni
+insert/delete-line la pantalla sale pisada.
+
+Lo que sí funciona es delegar el render a un emulador de terminal de verdad:
+correr el monitor dentro de `tmux` con un tamaño fijo y pedirle la pantalla ya
+compuesta con `tmux capture-pane -p`. Las capturas de §7 salen de ahí, y fue
+ese método el que hizo aparecer el último bug que arreglé — el pie de página se
+cortaba en 80 columnas justo en `+/- interva`, escondiendo `h ayuda` y
+`q salir`.
 
 ### Probar `procfs.py` contra el `/proc` real
 
@@ -613,35 +649,125 @@ docker compose run --rm monitor python3 -c \
 
 ## 7. Ejemplo de uso
 
-*Salida real de una corrida, transcripta como texto (todavía me debo un GIF).*
+Capturas reales de la pantalla, tomadas con `tmux capture-pane` sobre una
+terminal de **24×80** (el tamaño estándar, que es justo el caso más ajustado
+para el panel de detalle). Reproducibles con:
 
-Vista File Descriptors, con el proceso `main` seleccionado:
+```bash
+tmux new-session -d -s cap -x 80 -y 24 -c tp1 "python3 src/main.py"
+sleep 9 && tmux send-keys -t cap 5 && sleep 3 && tmux capture-pane -t cap -p
+```
+
+### Vista Señales — el caso que más apretado queda
+
+Las 5 máscaras entran completas gracias al reparto adaptativo de §8. Notar que
+`SigBlk` de `systemd` tiene casi todo bloqueado, y que aparecen las señales de
+glibc de las que habla `dudas.md` §2:
 
 ```
- Monitor /proc — vista: File Descriptors — refresco: 5.0s
-verbose:off | top-cpu:651(3.0%) | top-mem:502(34MB) | orden:cpu
----------------------------------------------------------------------------
-   PID USER          PPID S   CPU%  RSS(MB)  THR  COMANDO
-   651 root           631 S    3.0     15.4    1  python3 src/main.py
-   645 root           631 S    1.5     15.5    1  python3 src/main.py
-     1 root             0 S    1.0      4.6    7  /process_api --firecracke
-   632 root           631 S    1.0     16.2   11  python3 src/main.py
-=============================================================================
+ Monitor /proc — vista: Señales — refresco: 10.0s
+verbose:off | top-cpu:2343(2.5%) | top-mem:1656(25MB) | orden:cpu
+-------------------------------------------------------------------------------
+     PID USER          PPID S   CPU%  RSS(MB)  THR  COMANDO
+    2355 maxi          2339 R    1.0     16.4    1  python3 src/main.py
+    2369 maxi          2339 S    1.0     16.5    1  python3 src/main.py
+    2338 maxi          2327 S    0.5      3.9    1  tmux new-session -d -s tp1c
+    2360 maxi          2339 R    0.5     15.9    1  python3 src/main.py
+    2366 maxi          2339 R    0.5     15.8    1  python3 src/main.py
+       1 root             0 S    0.0     11.6    1  /sbin/init
+
+===============================================================================
+PID 1 — máscaras de señales
+Bloqueadas (SigBlk) [7fefc1fe28014a03]:
+  SIGHUP, SIGINT, SIGUSR1, SIGUSR2, SIGTERM, SIGCHLD, SIGWINCH, SIGPWR, SIGRTMI
+Ignoradas (SigIgn) [0000000000001000]:
+  SIGPIPE
+Con handler propio (SigCgt) [00000000000004ec]:
+  SIGQUIT, SIGILL, SIGABRT, SIGBUS, SIGFPE, SIGSEGV
+Pendientes del proceso (SigPnd) [0000000000000000]:
+  (ninguna)
+Pendientes del grupo (ShdPnd) [0000000000000000]:
+  (ninguna)
+1-7 vista ↑↓ nav Enter pin / cmd u user c orden +/- int h ayuda q salir
+```
+
+### Vista Sistema global
+
+```
+===============================================================================
+CPU global — user: 0.4%  system: 0.2%  idle: 99.4%  iowait: 0.0%
+Load average: 0.31 0.08 0.03   (corriendo 3/566)
+Memoria — total: 7761 MB  libre: 6583 MB  buffers: 3 MB  cache: 331 MB
+Swap — total: 2048 MB  libre: 2048 MB
+Boot time: 2026-08-01 14:46:53   Uptime: 0.8 h   (idle acumulado: 16.2 h)
+Procesos: 49   Threads totales: 84   Zombies: 0
+Por estado — R:2 S:47 D:0 T:0 Z:0 I:0
+Top 3 por CPU:                          Top 3 por Memoria:
+     2343  python3             2.0%          1656  docker-desktop-     25.1 MB
+     2369  python3             1.0%           278  unattended-upgr     22.2 MB
+     2356  python3             1.0%          2339  python3             20.6 MB
+```
+
+Acá se ve en vivo la discrepancia de `/proc/loadavg` bajo WSL2 que documento en
+§5: el load average dice `3/566` tareas mientras que mi recorrido de `/proc`
+cuenta 49 procesos y 84 threads. El número correcto es el mío — coincide exacto
+con `ps -e`.
+
+### Vista Scheduling
+
+```
+PID 1 — scheduling
+Policy: SCHED_OTHER (0)   Nice: 0   Priority: 20
+RT priority: 0   CPU affinity: 0-19
+Ctx switches — voluntarios: 989   involuntarios: 52
+utime: 33 ticks   stime: 42 ticks
+SID: 1   PGID: 1
+```
+
+### Panel de ayuda (tecla `h`)
+
+```
+ Monitor /proc — vista: Sistema global — refresco: 2.0s
+verbos┌──────────────────────────────────────────────────────────────────┐
+------│ AYUDA — Monitor de Procesos y Threads                            │-----
+     P│                                                                  │
+    23│ 1/r Resumen    2/m Memoria     3/f File descriptors  4/t Threads │
+    23│ 5/s Señales    6/p Scheduling  7/g Sistema global                │
+    23│                                                                  │
+    23│ ↑ ↓     Navegar la lista       c    Orden: CPU% / RSS / PID      │
+    23│ Enter   Pin del proceso        / u  Filtrar comando / usuario    │
+      │ + / -   Intervalo de la vista  q    Salir limpiamente            │
+      │                                                                  │
+======│ Señales al proceso main (kill -SIGXXX <pid>):                    │=====
+CPU gl│   INT/TERM  shutdown limpio      USR1   dump del snapshot a JSON │
+Load a│   HUP       recarga config.json  USR2   toggle modo verbose      │
+Memori│   WINCH     repintar (resize de terminal)                        │
+Swap —│                                                                  │
+Boot t│ Verbose (USR2) agrega: más FDs por proceso + el inodo de pipes y │
+Proces│ sockets, el desglose de RSS (anon/file/shmem) y, por thread, el  │
+Por es│ core donde corrió y sus jiffies crudos de utime/stime.           │
+Top 3 │                                                                  │
+     2│ (cualquier tecla cierra esta ayuda)                              │1 MB
+     2└──────────────────────────────────────────────────────────────────┘2 MB
+     2366  python3             0.5%          2339  python3             20.6 MB
+1-7 vista ↑↓ nav Enter pin / cmd u user c orden +/- int h ayuda q salir
+```
+
+### Vista File Descriptors con verbose activado
+
+Con `kill -USR2` la vista muestra más FDs por proceso y agrega el inodo de
+pipes y sockets. Dos FDs con el mismo `pipe:[N]` son los dos extremos del mismo
+pipe — acá se puede encontrar el `Pipe()` de reload que une a `main` con cada
+analizador, que es el ejercicio de la clase 5 sobre procesos reales:
+
+```
 PID 651 — 35 FDs abiertos (tty:3, file:3, pipe:14, socket:15)
-(mostrando los primeros 20 de 35 — SIGUSR2 activa el modo verbose para ver más)
 
   fd    0  [tty       ]  /dev/pts/0
-  fd    1  [tty       ]  /dev/pts/0
-  fd    2  [tty       ]  /dev/pts/0
   fd    3  [file      ]  /dev/shm/pym-631-mne10_hw (deleted)
-  fd    5  [pipe      ]  pipe:[2249]
-  fd    6  [pipe      ]  pipe:[2273]
-1-7/rmftspg vista | ↑↓ nav | Enter pin | / cmd | u user | c orden | +/- intervalo | h ayuda | q salir
+  fd    5  [pipe      ]  pipe:[2249]  inodo=2249
+  fd    6  [pipe      ]  pipe:[2273]  inodo=2273
 ```
-
-Los `pipe:[2249]` / `pipe:[2273]` son los `Pipe()` de reload de config: con
-SIGUSR2 activado se ve el inodo al lado y se puede confirmar que el otro
-extremo aparece en el proceso analizador correspondiente.
 
 ---
 
@@ -677,14 +803,33 @@ extremo aparece en el proceso analizador correspondiente.
   filas y el recorte se comía justo la línea que explica cómo cerrarla. Y la
   primera tecla que se aprieta la cierra y se consume ahí, en vez de cambiar
   de vista por detrás del overlay.
-- **Layout 45/55 (lista/detalle):** la lista de procesos queda siempre visible,
-  cualquiera sea la vista activa, como pide la consigna; el panel de detalle se
-  lleva la mayoría del espacio vertical porque es donde vive la información
-  específica de cada vista.
+- **Layout 45/55 lista/detalle, pero adaptativo.** La lista queda siempre
+  visible, cualquiera sea la vista activa, como pide la consigna. El reparto
+  nominal es 45/55, pero en terminales chicas se prioriza el detalle hasta las
+  11 filas que necesita el panel más alto (Señales: título + 5 máscaras × 2
+  filas). Con el 45% fijo, en una terminal estándar de 24 filas al detalle le
+  quedaban 10 filas útiles y la última máscara (`ShdPnd`) se dibujaba sobre el
+  pie de página, o sea que desaparecía. Ahora en 24 filas la lista se queda con
+  7 y el detalle con las 11 que necesita. La cuenta completa de filas está en
+  el docstring de `_alto_de_lista`.
+- **El pie se adapta al ancho.** Hay varias versiones, de más a menos completa,
+  y se elige la primera que entre. La versión larga mide 103 caracteres y en 80
+  columnas se cortaba en `+/- interva`, escondiendo `h ayuda` y `q salir` — las
+  dos teclas que uno más necesita descubrir y las únicas que no son
+  adivinables. Lo encontré capturando la pantalla real.
+- **La selección se ancla al PID, no al índice de fila.** `EstadoUI` guarda
+  `pid_seleccionado` y el índice se recalcula en cada frame. Con el índice como
+  ancla había dos bugs distintos: al pinear, el proceso saltaba a la fila 0 pero
+  el índice se quedaba quieto, así que el detalle pasaba a mostrar **otro**
+  proceso y el segundo Enter, en vez de despinear, pineaba a ese otro; y con el
+  orden por CPU% (el default), la lista se reordena sola en cada refresco, así
+  que la barra iba saltando entre procesos sin que el usuario tocara nada.
 - **El proceso pineado va siempre primero, fuera del criterio de sort:** así
-  cumplo literalmente "no cambia aunque cambie el orden". En vez de tratar de
-  seguir el índice de una fila que se mueve, saco al pineado del sort y lo fijo
-  en la fila 0. Si el proceso muere, el pin se suelta solo.
+  cumplo literalmente "no cambia aunque cambie el orden". Si el proceso muere,
+  el pin se suelta solo.
+- **Cambiar de vista mantiene el proceso seleccionado.** Es el sentido de tener
+  la lista arriba fija y el detalle abajo cambiando: mirás el mismo proceso
+  desde los 7 ángulos sin perder dónde estabas.
 - **El intervalo vigente está en el título.** Muestro `refresco: 5.0s` y un
   `(mín)` cuando se toca el piso, para que `+`/`-` no parezcan no hacer nada
   cuando la vista ya está en su mínimo.

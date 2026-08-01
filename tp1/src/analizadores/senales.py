@@ -9,19 +9,18 @@ del sistema; allá MANEJAMOS las señales que le llegan al monitor mismo.
 """
 
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 _CAMPOS = ("SigBlk", "SigIgn", "SigCgt", "SigPnd", "ShdPnd")
 
 
-def _extraer(historial, cfg, verbose, pids_proxy):
+def _extraer(historial, cfg, verbose, log, pids_proxy):
     pids = list(pids_proxy)
-    resultado = {}
 
-    for pid in pids:
+    def uno(pid):
         status = procfs.read_status(pid)
         if status is None:
-            continue
+            return None
 
         entrada = {"pid": pid}
         for campo in _CAMPOS:
@@ -30,8 +29,9 @@ def _extraer(historial, cfg, verbose, pids_proxy):
                 "hex": hexval,
                 "nombres": procfs.decode_sigmask(hexval),
             }
-        resultado[pid] = entrada
-    return resultado
+        return pid, entrada
+
+    return por_pid(pids, uno, log)
 
 
 def run(pids_proxy, snapshot, interval_value, stop_event, log_queue, **kwargs):

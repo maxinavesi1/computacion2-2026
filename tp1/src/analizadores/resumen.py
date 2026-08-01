@@ -6,36 +6,39 @@ vista de detalle esté activa.
 
 import time
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 
-def _extraer(historial, cfg, verbose, pids_proxy):
+def _extraer(historial, cfg, verbose, log, pids_proxy):
     pids = list(pids_proxy)  # copia local: evita que la lista cambie bajo nuestros pies a mitad de la vuelta
     ahora = time.time()
-    resultado = {}
+    claves_vistas = set()
 
-    for pid in pids:
+    def uno(pid):
         stat = procfs.read_stat(pid)
         if stat is None:
-            continue  # el proceso murió entre que lo listamos y lo leímos (TOCTOU); lo salteamos esta vuelta
+            return None  # murió entre que lo listamos y lo leímos (TOCTOU): lo salteamos esta vuelta
         status = procfs.read_status(pid)
         cmdline = procfs.read_cmdline(pid)
 
+        # La clave es (pid, starttime), no el pid solo: ver procfs.clave_proceso.
+        clave = procfs.clave_proceso(pid, stat)
+        claves_vistas.add(clave)
         jiffies_actuales = stat["utime"] + stat["stime"]
-        prev = historial.get(pid)
+        prev = historial.get(clave)
         if prev is not None:
             jiffies_prev, wall_prev = prev
             cpu_pct = procfs.calcular_cpu_pct(jiffies_prev, jiffies_actuales, wall_prev, ahora)
         else:
-            cpu_pct = 0.0  # primera vez que vemos este PID: no hay delta todavía
-        historial[pid] = (jiffies_actuales, ahora)
+            cpu_pct = 0.0  # primera vez que vemos este proceso: no hay delta todavía
+        historial[clave] = (jiffies_actuales, ahora)
 
         # Uid/Gid vienen como 4 valores (real, effective, saved, filesystem);
         # nos queda el real, que es el que interesa para "de quién es este
         # proceso". La consigna pide UID *y* GID además del nombre de usuario.
         uid = status["Uid"][0] if status and "Uid" in status else None
         gid = status["Gid"][0] if status and "Gid" in status else None
-        resultado[pid] = {
+        return pid, {
             "pid": pid,
             "ppid": stat["ppid"],
             "uid": uid,
@@ -51,10 +54,13 @@ def _extraer(historial, cfg, verbose, pids_proxy):
             "rss_kb": status.get("VmRSS", 0) if status else 0,
         }
 
-    # limpiar historial de pids que ya no existen, para no acumular memoria indefinidamente
-    for pid_viejo in list(historial.keys()):
-        if pid_viejo not in resultado:
-            del historial[pid_viejo]
+    resultado = por_pid(pids, uno, log)
+
+    # limpiar historial de procesos que ya no existen, para no acumular memoria
+    # indefinidamente en una corrida larga
+    for clave_vieja in list(historial.keys()):
+        if clave_vieja not in claves_vistas:
+            del historial[clave_vieja]
 
     return resultado
 

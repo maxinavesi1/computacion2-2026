@@ -19,7 +19,7 @@ que pide la consigna, y por eso es el más "cargado" de los siete:
 """
 
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 _MAX_NORMAL = 20     # FDs por proceso en modo normal
 _MAX_VERBOSE = 200   # tope en modo verbose si config.json no dice otra cosa
@@ -45,30 +45,28 @@ def _inodo(destino):
     return None
 
 
-def _extraer(historial, cfg, verbose, pids_proxy):
+def _extraer(historial, cfg, verbose, log, pids_proxy):
     pids = list(pids_proxy)
     max_verbose = cfg.get("fds", {}).get("max_mostrados", _MAX_VERBOSE)
     limite = max_verbose if verbose else min(_MAX_NORMAL, max_verbose)
-    resultado = {}
 
-    for pid in pids:
+    def uno(pid):
         fds = procfs.read_fds(pid)
 
         if fds is None:
             # El proceso murió entre que el recolector lo listó y que llegamos
             # acá. No es un error: simplemente no aparece en esta vuelta.
-            continue
+            return None
         if fds is procfs.SIN_PERMISO:
-            resultado[pid] = {
+            return pid, {
                 "pid": pid,
                 "error": "sin permiso para leer /proc/<pid>/fd (proceso de otro usuario)",
                 "fds": [], "total": 0, "por_tipo": {}, "truncado": False,
             }
-            continue
 
-        por_tipo = {}
+        conteo_por_tipo = {}
         for entrada in fds:
-            por_tipo[entrada["tipo"]] = por_tipo.get(entrada["tipo"], 0) + 1
+            conteo_por_tipo[entrada["tipo"]] = conteo_por_tipo.get(entrada["tipo"], 0) + 1
 
         visibles = []
         for entrada in fds[:limite]:
@@ -77,14 +75,15 @@ def _extraer(historial, cfg, verbose, pids_proxy):
                 fila["inodo"] = _inodo(entrada["destino"])
             visibles.append(fila)
 
-        resultado[pid] = {
+        return pid, {
             "pid": pid,
             "total": len(fds),
-            "por_tipo": por_tipo,
+            "por_tipo": conteo_por_tipo,
             "fds": visibles,
             "truncado": len(fds) > limite,
         }
-    return resultado
+
+    return por_pid(pids, uno, log)
 
 
 def run(pids_proxy, snapshot, interval_value, stop_event, log_queue, **kwargs):

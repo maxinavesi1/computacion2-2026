@@ -50,9 +50,29 @@ def run(snapshot, pids_proxy, interval_values, stop_event, verbose_value,
 
 
 class EstadoUI:
+    """
+    Estado local del proceso Display. No es memoria compartida: vive
+    enteramente acá y nadie más lo toca (salvo los filtros por defecto, que
+    llegan por el Manager.dict de control cuando hay SIGHUP).
+
+    Nota sobre la selección: el ancla es `pid_seleccionado`, NO el índice
+    `seleccion`. El índice se recalcula en cada frame a partir del PID (ver
+    `_reanclar_seleccion`). Antes el ancla era el índice y eso rompía en dos
+    situaciones distintas:
+
+      - Al pinear: el proceso pineado salta a la fila 0, pero el índice se
+        quedaba donde estaba, así que el panel de detalle pasaba a mostrar
+        OTRO proceso y un segundo Enter, en vez de despinear, pineaba a ese
+        otro.
+      - Con `orden: cpu` (el default): la lista se reordena sola en cada
+        refresco, así que la fila resaltada iba saltando entre procesos
+        distintos sin que el usuario tocara nada.
+    """
+
     def __init__(self):
         self.vista_actual = "resumen"
-        self.seleccion = 0          # índice dentro de la lista YA renderizada
+        self.seleccion = 0            # índice en la lista renderizada; derivado de pid_seleccionado
+        self.pid_seleccionado = None  # el ancla real de la selección
         self.pid_pineado = None
         self.filtro_comando = ""
         self.filtro_usuario = ""
@@ -113,6 +133,13 @@ def _revisar_reload(estado, control):
     reaplicamos los filtros por defecto — es la única forma en que main.py
     puede "tocar" el estado local del proceso Display, que de otra manera
     vive enteramente en memoria propia (no compartida).
+
+    El primer frame también cuenta: `reload_seq` arranca en 0 y el estado en
+    -1, así que la primera comparación aplica los filtros que vinieron de
+    config.json. Antes había un `if seq != 0` que salteaba justo esa primera
+    vez "para no pisar los filtros del usuario", pero en el primer frame el
+    usuario todavía no tipeó nada: el único efecto era que `filtros_default`
+    del config.json se ignoraba hasta que llegara un SIGHUP.
     """
     try:
         seq = control.get("reload_seq", 0)
@@ -120,10 +147,9 @@ def _revisar_reload(estado, control):
         return
     if seq != estado._ultimo_reload_seq:
         estado._ultimo_reload_seq = seq
-        if estado._ultimo_reload_seq != 0:  # no pisar los filtros en el primer frame
-            filtros = control.get("filtros_default", {})
-            estado.filtro_comando = filtros.get("comando", "")
-            estado.filtro_usuario = filtros.get("usuario", "")
+        filtros = control.get("filtros_default", {})
+        estado.filtro_comando = filtros.get("comando", "")
+        estado.filtro_usuario = filtros.get("usuario", "")
 
 
 # ---------------------------------------------------------------------------
@@ -146,19 +172,23 @@ def _manejar_tecla(tecla, estado, interval_values, stop_event, snapshot, dump_di
         return False
 
     if ch in vistas.TECLA_A_VISTA:
+        # No se resetea la selección: cambiar de vista mantiene el proceso
+        # elegido, que es el punto de tener la lista siempre arriba y el panel
+        # de detalle cambiando abajo (mirás el mismo proceso desde 7 ángulos).
         estado.vista_actual = vistas.TECLA_A_VISTA[ch]
-        estado.seleccion = 0
         return False
 
     if tecla in (curses.KEY_UP,):
-        estado.seleccion = max(0, estado.seleccion - 1)
+        _mover_seleccion(estado, -1)
     elif tecla in (curses.KEY_DOWN,):
-        estado.seleccion += 1
+        _mover_seleccion(estado, +1)
     elif tecla in (10, 13, curses.KEY_ENTER):
-        pids_visibles = getattr(estado, "_ultimo_orden_pids", [])
-        if 0 <= estado.seleccion < len(pids_visibles):
-            pid_click = pids_visibles[estado.seleccion]
-            estado.pid_pineado = None if estado.pid_pineado == pid_click else pid_click
+        # Toggle sobre el PID anclado, no sobre el índice: si usáramos el
+        # índice, el propio acto de pinear mueve la fila y el segundo Enter
+        # caería sobre otro proceso.
+        if estado.pid_seleccionado is not None:
+            estado.pid_pineado = (None if estado.pid_pineado == estado.pid_seleccionado
+                                  else estado.pid_seleccionado)
     elif ch == "/":
         estado.modo_entrada = "comando"
         estado.buffer_entrada = estado.filtro_comando
@@ -176,6 +206,42 @@ def _manejar_tecla(tecla, estado, interval_values, stop_event, snapshot, dump_di
         estado.mostrar_ayuda = not estado.mostrar_ayuda
 
     return False
+
+
+def _mover_seleccion(estado, delta):
+    """
+    Flechas ↑↓: mueven el índice y re-anclan el PID seleccionado a la fila
+    nueva. Trabaja sobre `_ultimo_orden_pids`, que es la lista tal cual se
+    dibujó en el frame anterior — o sea exactamente lo que el usuario está
+    viendo cuando aprieta la tecla.
+    """
+    pids = getattr(estado, "_ultimo_orden_pids", [])
+    if not pids:
+        estado.seleccion = 0
+        estado.pid_seleccionado = None
+        return
+    estado.seleccion = max(0, min(len(pids) - 1, estado.seleccion + delta))
+    estado.pid_seleccionado = pids[estado.seleccion]
+
+
+def _reanclar_seleccion(estado, pids):
+    """
+    Recalcula el índice de selección a partir del PID anclado, una vez por
+    frame y después de ordenar/filtrar/pinear.
+
+    Si el proceso anclado sigue visible, la barra lo sigue aunque haya cambiado
+    de fila. Si desapareció (murió, o lo filtraste), la selección se queda en la
+    misma posición de la lista y se re-ancla a lo que haya ahí.
+    """
+    if not pids:
+        estado.seleccion = 0
+        estado.pid_seleccionado = None
+        return
+    if estado.pid_seleccionado in pids:
+        estado.seleccion = pids.index(estado.pid_seleccionado)
+    else:
+        estado.seleccion = min(max(0, estado.seleccion), len(pids) - 1)
+        estado.pid_seleccionado = pids[estado.seleccion]
 
 
 def _manejar_entrada_texto(estado, tecla):
@@ -247,19 +313,17 @@ def _dibujar(stdscr, snapshot, estado, interval_values, verbose_value, top3_cpu_
 
     filas, ts_resumen = _obtener_lista_procesos(snapshot, estado)
     estado._ultimo_orden_pids = [f["pid"] for f in filas]
-    estado.seleccion = min(estado.seleccion, max(0, len(filas) - 1))
+    _reanclar_seleccion(estado, estado._ultimo_orden_pids)
 
     _dibujar_encabezado(stdscr, ancho, estado, interval_values, verbose_value,
                         top3_cpu_arr, top3_mem_arr, snapshot)
 
-    # tamaño de la mitad superior (lista) vs inferior (detalle): 45/55 aprox
-    alto_lista = max(4, int((alto - 5) * 0.45))
     fila_inicio_lista = 3
+    alto_lista = _alto_de_lista(alto)
     _dibujar_lista(stdscr, filas, estado, fila_inicio_lista, alto_lista, ancho)
 
     fila_inicio_detalle = fila_inicio_lista + alto_lista + 1
-    pid_seleccionado = filas[estado.seleccion]["pid"] if filas and estado.seleccion < len(filas) else None
-    _dibujar_detalle(stdscr, snapshot, estado, pid_seleccionado, fila_inicio_detalle,
+    _dibujar_detalle(stdscr, snapshot, estado, estado.pid_seleccionado, fila_inicio_detalle,
                       alto - fila_inicio_detalle - 1, ancho)
 
     _dibujar_pie(stdscr, alto - 1, ancho, estado)
@@ -288,6 +352,46 @@ def _dibujar(stdscr, snapshot, estado, interval_values, verbose_value, top3_cpu_
     if estado.mostrar_ayuda:
         _dibujar_ayuda(stdscr, alto, ancho)
     curses.doupdate()
+
+
+# Filas de contenido que necesita el panel de detalle más alto (Señales: 1 de
+# título + 5 máscaras × 2 filas). Si la terminal da para tanto, se las
+# reservamos aunque eso implique achicar la lista de procesos.
+_DETALLE_MIN = 11
+# Piso de la lista: 1 fila de encabezado + 3 procesos visibles.
+_LISTA_MIN = 4
+
+
+def _alto_de_lista(alto):
+    """
+    Reparte el alto de la terminal entre la lista de procesos (arriba) y el
+    panel de detalle (abajo). El reparto nominal es 45/55, pero en terminales
+    chicas se prioriza el detalle hasta `_DETALLE_MIN` filas de contenido.
+
+    El motivo es concreto: con el 45% fijo, en una terminal estándar de 24
+    filas al panel de detalle le quedaban 10 filas útiles y la vista Señales
+    necesita 11, así que la última máscara (ShdPnd) se dibujaba sobre el pie de
+    página y se perdía. Ahora en 24 filas la lista se queda con 7 (encabezado +
+    6 procesos) y el detalle con las 11 que necesita.
+
+    La contabilidad completa de las filas de la pantalla:
+
+        0,1,2                    encabezado
+        3                        encabezado de la lista
+        4 .. 3+alto_lista-1      procesos
+        3+alto_lista             separador '=' que dibuja _dibujar_detalle
+        .. alto-2                contenido del detalle
+        alto-1                   pie
+
+    De ahí sale que las filas útiles de detalle son `alto - alto_lista - 6`, y
+    pedir que eso sea >= _DETALLE_MIN equivale a `alto_lista <= alto - 6 - _DETALLE_MIN`.
+    """
+    disponible = alto - 5   # descuenta 3 de encabezado, 1 de separador y 1 de pie
+    if disponible < _LISTA_MIN:
+        return _LISTA_MIN
+    nominal = int(disponible * 0.45)
+    tope_para_que_entre_el_detalle = alto - 6 - _DETALLE_MIN
+    return max(_LISTA_MIN, min(nominal, tope_para_que_entre_el_detalle))
 
 
 def _addstr_seguro(stdscr, y, x, texto, attr=0):
@@ -354,9 +458,28 @@ def _dibujar_lista(stdscr, filas, estado, y0, alto, ancho):
         _addstr_seguro(stdscr, y0 + 1, 0, "(sin datos todavía — esperando al recolector/analizador de resumen...)")
 
 
+# Variantes del pie, de más a menos completa. `_dibujar_pie` elige la primera
+# que entre en el ancho de la terminal.
+#
+# Hace falta porque la versión larga mide 103 caracteres y en una terminal
+# estándar de 80 columnas se cortaba justo en "+/- interva", perdiendo
+# `h ayuda` y `q salir` — las dos teclas que uno más necesita descubrir, y
+# encima las únicas que no son adivinables. Verificado capturando la pantalla
+# real en un tmux de 24x80.
+_PIES = [
+    "1-7/rmftspg vista | ↑↓ nav | Enter pin | / cmd | u user | c orden | +/- intervalo | h ayuda | q salir",
+    "1-7 vista | ↑↓ nav | Enter pin | / cmd | u user | c orden | +/- int | h ayuda | q salir",
+    "1-7 vista ↑↓ nav Enter pin / cmd u user c orden +/- int h ayuda q salir",
+    "1-7 vista  h ayuda  q salir",
+    "h ayuda  q salir",
+]
+
+
 def _dibujar_pie(stdscr, y, ancho, estado):
-    ayuda = "1-7/rmftspg vista | ↑↓ nav | Enter pin | / cmd | u user | c orden | +/- intervalo | h ayuda | q salir"
-    _addstr_seguro(stdscr, y, 0, ayuda.ljust(ancho), curses.A_DIM)
+    # addnstr recorta a ancho-1, así que ese es el presupuesto real
+    presupuesto = max(0, ancho - 1)
+    texto = next((p for p in _PIES if len(p) <= presupuesto), _PIES[-1])
+    _addstr_seguro(stdscr, y, 0, texto.ljust(ancho), curses.A_DIM)
 
 
 def _dibujar_prompt_entrada(stdscr, alto, ancho, estado):
@@ -548,13 +671,15 @@ def _detalle_senales(stdscr, snapshot, pid, y0, alto, ancho):
     etiquetas = [("sigblk", "Bloqueadas (SigBlk)"), ("sigign", "Ignoradas (SigIgn)"),
                  ("sigcgt", "Con handler propio (SigCgt)"), ("sigpnd", "Pendientes del proceso (SigPnd)"),
                  ("shdpnd", "Pendientes del grupo (ShdPnd)")]
+    # 2 filas por máscara (etiqueta+hex, y los nombres indentados), sin línea en
+    # blanco entre medio: con la línea en blanco el panel pedía 16 filas y en
+    # una terminal de 24 la última máscara terminaba debajo del pie de página.
     fila = y0 + 1
     for clave, etiqueta in etiquetas:
         info = data.get(clave, {"hex": "?", "nombres": []})
         nombres = ", ".join(info["nombres"]) if info["nombres"] else "(ninguna)"
-        _addstr_seguro(stdscr, fila, 0, f"{etiqueta} [{info['hex']}]:")
-        fila += 1
-        _addstr_seguro(stdscr, fila, 2, nombres)
+        _addstr_seguro(stdscr, fila, 0, f"{etiqueta} [{info['hex']}]:", curses.A_UNDERLINE)
+        _addstr_seguro(stdscr, fila + 1, 2, nombres)
         fila += 2
 
 
@@ -608,10 +733,12 @@ def _detalle_sistema(stdscr, snapshot, y0, alto, ancho):
                     f"Por estado — R:{ce.get('R', 0)} S:{ce.get('S', 0)} D:{ce.get('D', 0)} "
                     f"T:{ce.get('T', 0)} Z:{ce.get('Z', 0)} I:{ce.get('I', 0)}")
 
-    _addstr_seguro(stdscr, y0 + 8, 0, "Top 3 por CPU:", curses.A_UNDERLINE)
+    # Los dos top 3 van lado a lado y sin línea en blanco antes: así el panel
+    # entero ocupa 11 filas y entra completo en una terminal de 24.
+    _addstr_seguro(stdscr, y0 + 7, 0, "Top 3 por CPU:", curses.A_UNDERLINE)
     for i, p in enumerate(data["top3_cpu"]):
-        _addstr_seguro(stdscr, y0 + 9 + i, 2, f"{p['pid']:>7}  {p['comm']:<16} {p['cpu_pct']:>6.1f}%")
+        _addstr_seguro(stdscr, y0 + 8 + i, 2, f"{p['pid']:>7}  {p['comm']:<16} {p['cpu_pct']:>6.1f}%")
 
-    _addstr_seguro(stdscr, y0 + 8, ancho // 2, "Top 3 por Memoria:", curses.A_UNDERLINE)
+    _addstr_seguro(stdscr, y0 + 7, ancho // 2, "Top 3 por Memoria:", curses.A_UNDERLINE)
     for i, p in enumerate(data["top3_mem"]):
-        _addstr_seguro(stdscr, y0 + 9 + i, ancho // 2 + 2, f"{p['pid']:>7}  {p['comm']:<16} {p['rss_kb']/1024:>7.1f} MB")
+        _addstr_seguro(stdscr, y0 + 8 + i, ancho // 2 + 2, f"{p['pid']:>7}  {p['comm']:<16} {p['rss_kb']/1024:>7.1f} MB")

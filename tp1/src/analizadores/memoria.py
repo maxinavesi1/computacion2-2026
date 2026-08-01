@@ -1,21 +1,20 @@
 """Analizador "memoria": detalle de memoria virtual/residente y segmentos de /proc/<pid>/maps."""
 
 import procfs
-from analizadores._base import run_loop
+from analizadores._base import por_pid, run_loop
 
 
-def _extraer(historial, cfg, verbose, pids_proxy):
+def _extraer(historial, cfg, verbose, log, pids_proxy):
     pids = list(pids_proxy)
-    resultado = {}
 
-    for pid in pids:
+    def uno(pid):
         status = procfs.read_status(pid)
         stat = procfs.read_stat(pid)
         if status is None or stat is None:
-            continue
+            return None
         maps = procfs.read_maps_agrupado(pid)
 
-        resultado[pid] = {
+        fila = {
             "pid": pid,
             "vm_size_kb": status.get("VmSize", 0),
             "vm_rss_kb": status.get("VmRSS", 0),
@@ -33,15 +32,17 @@ def _extraer(historial, cfg, verbose, pids_proxy):
         }
         if verbose:
             # Modo verbose (SIGUSR2): sumamos el desglose fino de RSS que trae
-            # status, que en modo normal omitimos porque son 3 campos más por
+            # status, que en modo normal omitimos porque son 4 campos más por
             # proceso viajando por el Manager en cada refresco.
-            resultado[pid].update({
+            fila.update({
                 "vm_peak_kb": status.get("VmPeak", 0),
                 "rss_anon_kb": status.get("RssAnon", 0),
                 "rss_file_kb": status.get("RssFile", 0),
                 "rss_shmem_kb": status.get("RssShmem", 0),
             })
-    return resultado
+        return pid, fila
+
+    return por_pid(pids, uno, log)
 
 
 def run(pids_proxy, snapshot, interval_value, stop_event, log_queue, **kwargs):
