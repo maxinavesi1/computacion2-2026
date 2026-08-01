@@ -375,6 +375,33 @@ class TestLayout(unittest.TestCase):
                 self.assertLess(inicio_detalle, alto - 1)
 
 
+class TestTerminalChica(unittest.TestCase):
+    """
+    Por debajo del mínimo se muestra un cartel en vez de dibujar la interfaz.
+    Sin el guard, curses posiciona el cursor en filas que no existen, la
+    terminal scrollea para acomodarlas y la pantalla queda repetida varias veces
+    hacia abajo: parece que el programa está roto cuando sólo falta agrandar.
+    """
+
+    def test_el_minimo_alcanza_para_el_layout_basico(self):
+        # encabezado (3) + lista mínima + separador + al menos 1 de detalle + pie
+        minimo_necesario = 3 + display._LISTA_MIN + 1 + 1 + 1
+        self.assertGreaterEqual(display._MIN_FILAS, minimo_necesario)
+
+    def test_el_minimo_entra_en_el_pie_mas_corto(self):
+        self.assertGreaterEqual(display._MIN_COLS, len(display._PIES[-1]) + 1)
+
+    def test_24x80_esta_por_encima_del_minimo(self):
+        # el tamaño estándar tiene que dibujar la interfaz completa, no el cartel
+        self.assertLess(display._MIN_FILAS, 24)
+        self.assertLess(display._MIN_COLS, 80)
+
+    def test_alto_de_lista_sigue_siendo_valido_en_el_minimo(self):
+        al = display._alto_de_lista(display._MIN_FILAS)
+        self.assertGreaterEqual(al, display._LISTA_MIN)
+        self.assertLess(3 + al + 1, display._MIN_FILAS - 1)
+
+
 class TestPie(unittest.TestCase):
     """
     Regresión: el pie medía 103 caracteres y en una terminal de 80 columnas se

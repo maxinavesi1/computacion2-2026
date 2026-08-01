@@ -449,13 +449,17 @@ docker compose run --rm monitor-aislado      # ve sólo los 11 propios
   siguiente cálculo arranca de cero.
 - **Terminal chica.** El reparto entre lista y detalle es adaptativo (§8), así
   que a partir de 24 filas —el tamaño estándar— entran completos todos los
-  paneles, incluido el de Señales, que es el más alto. Por debajo de eso el
-  detalle empieza a recortarse: a 20 filas le falta una fila para la última
-  máscara, porque la lista de procesos ya está en su mínimo de 4 y no hay de
-  dónde sacar más. Uso `addnstr` para que nunca crashee, pero **no implementé
+  paneles, incluido el de Señales, que es el más alto. Entre 14 y 23 filas el
+  detalle empieza a recortarse: a 20 filas le falta una para la última máscara,
+  porque la lista ya está en su mínimo de 4 y no hay de dónde sacar más. Por
+  debajo de 14×60 directamente no dibujo la interfaz: muestro un cartel
+  `Terminal muy chica` con el tamaño que falta, porque el resultado de intentar
+  dibujarla es peor que no hacerlo (curses escribe en filas que no existen, la
+  terminal scrollea y se ve la pantalla repetida hacia abajo, que parece un
+  crash y no lo es). Uso `addnstr` para que nunca crashee, pero **no implementé
   scroll en el panel de detalle**; la lista de procesos sí scrollea con las
-  flechas. El pie de página elige entre varias versiones según el ancho para no
-  perder `h ayuda` y `q salir` en 80 columnas.
+  flechas. El pie elige entre varias versiones según el ancho para no perder
+  `h ayuda` y `q salir` en 80 columnas.
 - **Listas largas de señales se cortan a lo ancho.** El `SigBlk` de un proceso
   como `systemd` no entra en 80 columnas y se trunca a mitad de un nombre. Es
   dato, no navegación, así que preferí truncar antes que meter scroll
@@ -533,10 +537,20 @@ y el contenedor termina solo), o `Ctrl+C`, que manda `SIGINT` y el monitor
 maneja igual de prolijo (ver §3.4). Si usaste `up -d`, después de salir podés
 limpiar con `docker compose down`.
 
-> `docker attach` necesita que **tu** terminal sea un TTY. Si lo corrés desde
-> un pipe o desde un panel que no es una terminal real (por ejemplo la vista de
-> logs de la extensión de Docker para VS Code), falla con
-> `the input device is not a TTY`. Usá una terminal común.
+> **Dos trampas con las que me topé, las dos del entorno y no del monitor:**
+>
+> 1. `docker attach` necesita que **tu** terminal sea un TTY. Desde un pipe, o
+>    desde el panel de la extensión de Docker para VS Code, falla con
+>    `the input device is not a TTY`. Ese panel además le antepone
+>    `tp1-monitor  |` a cada línea de salida, lo que destruye el posicionamiento
+>    del cursor de `curses` y deja la pantalla toda pisada. Usá una terminal
+>    común.
+> 2. La ventana tiene que tener **al menos 14 filas** (y 24 para que entren
+>    todos los paneles completos). Si es más chica, curses posiciona el cursor
+>    en filas que no existen, la terminal scrollea para acomodarlas y se ve la
+>    interfaz repetida varias veces hacia abajo. El monitor ahora detecta ese
+>    caso y muestra un cartel `Terminal muy chica` con el tamaño que falta, en
+>    vez de dibujar algo ilegible.
 
 ### Ver la diferencia de PID namespace
 

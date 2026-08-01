@@ -307,9 +307,46 @@ def _obtener_lista_procesos(snapshot, estado):
     return filas, resumen["ts"]
 
 
+# Tamaño mínimo para que el layout tenga sentido: 3 filas de encabezado + la
+# lista en su mínimo (4) + separador + algo de detalle + pie. Por debajo de
+# esto no se dibuja la interfaz: se muestra un cartel.
+_MIN_FILAS = 14
+_MIN_COLS = 60
+
+
+def _dibujar_terminal_chica(stdscr, alto, ancho):
+    """
+    Cartel para cuando la terminal es más chica que el mínimo utilizable.
+
+    Sin esto la pantalla queda ilegible de una forma confusa: curses posiciona
+    el cursor en filas que no existen, la terminal scrollea para acomodarlas y
+    el resultado es la interfaz repetida varias veces hacia abajo, mezclada con
+    lo que hubiera antes en el historial. Parece que el programa está roto
+    cuando en realidad sólo falta agrandar la ventana, así que conviene decirlo
+    con todas las letras.
+    """
+    stdscr.erase()
+    lineas = [
+        "Terminal muy chica",
+        f"tenés {alto}x{ancho}, hacen falta {_MIN_FILAS}x{_MIN_COLS}",
+        "agrandá la ventana",
+        "(q para salir)",
+    ]
+    for i, texto in enumerate(lineas):
+        y = max(0, (alto - len(lineas)) // 2) + i
+        x = max(0, (ancho - len(texto)) // 2)
+        _addstr_seguro(stdscr, y, x, texto, curses.A_BOLD if i == 0 else 0)
+
+
 def _dibujar(stdscr, snapshot, estado, interval_values, verbose_value, top3_cpu_arr, top3_mem_arr):
     stdscr.erase()
     alto, ancho = stdscr.getmaxyx()
+
+    if alto < _MIN_FILAS or ancho < _MIN_COLS:
+        _dibujar_terminal_chica(stdscr, alto, ancho)
+        stdscr.noutrefresh()
+        curses.doupdate()
+        return
 
     filas, ts_resumen = _obtener_lista_procesos(snapshot, estado)
     estado._ultimo_orden_pids = [f["pid"] for f in filas]
