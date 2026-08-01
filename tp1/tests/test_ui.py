@@ -375,6 +375,35 @@ class TestLayout(unittest.TestCase):
                 self.assertLess(inicio_detalle, alto - 1)
 
 
+class TestRecortar(unittest.TestCase):
+    """
+    El recorte silencioso de addnstr puede mentir: una lista de señales cortada
+    en el borde termina en "SIGCHLD," y se lee como si esa fuera la última.
+    """
+
+    def test_no_toca_lo_que_entra(self):
+        self.assertEqual(display._recortar("hola", 10), "hola")
+        self.assertEqual(display._recortar("hola", 4), "hola")
+
+    def test_marca_el_corte_con_elipsis(self):
+        self.assertEqual(display._recortar("abcdefgh", 4), "abc…")
+
+    def test_el_resultado_nunca_excede_el_ancho(self):
+        for n in range(1, 30):
+            with self.subTest(n=n):
+                self.assertLessEqual(len(display._recortar("x" * 50, n)), n)
+
+    def test_ancho_cero_o_negativo_devuelve_vacio(self):
+        self.assertEqual(display._recortar("hola", 0), "")
+        self.assertEqual(display._recortar("hola", -3), "")
+
+    def test_una_lista_de_senales_cortada_se_nota(self):
+        nombres = ", ".join(["SIGHUP", "SIGINT", "SIGQUIT", "SIGILL", "SIGTRAP"])
+        recortado = display._recortar(nombres, 20)
+        self.assertTrue(recortado.endswith("…"))
+        self.assertFalse(recortado.endswith(", "))
+
+
 class TestTerminalChica(unittest.TestCase):
     """
     Por debajo del mínimo se muestra un cartel en vez de dibujar la interfaz.

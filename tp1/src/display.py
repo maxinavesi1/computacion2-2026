@@ -431,6 +431,22 @@ def _alto_de_lista(alto):
     return max(_LISTA_MIN, min(nominal, tope_para_que_entre_el_detalle))
 
 
+def _recortar(texto, ancho_max):
+    """
+    Recorta `texto` a `ancho_max` marcando el corte con '…'.
+
+    Sin esto el recorte lo hace `addnstr` en silencio y el resultado puede
+    mentir: una lista de señales cortada al llegar al borde termina en
+    "SIGCHLD," y se lee como si esa fuera la última, cuando en realidad hay
+    más. Con el '…' queda claro que falta contenido.
+    """
+    if ancho_max <= 0:
+        return ""
+    if len(texto) <= ancho_max:
+        return texto
+    return texto[:ancho_max - 1] + "…"
+
+
 def _addstr_seguro(stdscr, y, x, texto, attr=0):
     alto, ancho = stdscr.getmaxyx()
     if y < 0 or y >= alto or x >= ancho:
@@ -485,9 +501,13 @@ def _dibujar_lista(stdscr, filas, estado, y0, alto, ancho):
             break
         f = filas[idx]
         marcador = "*" if estado.pid_pineado == f["pid"] else " "
-        linea = (f"{marcador}{f['pid']:>7} {f['usuario'][:10]:<10} {f['ppid']:>7} "
-                 f"{f['estado']:1} {f['cpu_pct']:>6.1f} {f['rss_kb']/1024:>8.1f} "
-                 f"{f['threads']:>4}  {f['comando'][:ancho]}")
+        prefijo = (f"{marcador}{f['pid']:>7} {f['usuario'][:10]:<10} {f['ppid']:>7} "
+                   f"{f['estado']:1} {f['cpu_pct']:>6.1f} {f['rss_kb']/1024:>8.1f} "
+                   f"{f['threads']:>4}  ")
+        # El comando se recorta con '…' para que se note que sigue: con
+        # pid: host hay líneas de comando larguísimas (containerd-shim y
+        # compañía) y cortarlas en seco puede leerse como el comando completo.
+        linea = prefijo + _recortar(f["comando"], ancho - len(prefijo) - 1)
         attr = curses.A_REVERSE if idx == estado.seleccion else 0
         _addstr_seguro(stdscr, y0 + 1 + i, 0, linea, attr)
 
@@ -668,8 +688,9 @@ def _detalle_fds(stdscr, snapshot, pid, y0, alto, ancho):
         # El inodo sólo viene en modo verbose: dos FDs con el mismo pipe:[N] o
         # socket:[N] son los dos extremos del MISMO objeto del kernel.
         extra = f"  inodo={entrada['inodo']}" if entrada.get("inodo") else ""
-        _addstr_seguro(stdscr, fila, 0,
-                        f"  fd {entrada['fd']:>4}  [{entrada['tipo']:<10}]  {entrada['destino']}{extra}")
+        prefijo = f"  fd {entrada['fd']:>4}  [{entrada['tipo']:<10}]  "
+        destino = _recortar(f"{entrada['destino']}{extra}", ancho - len(prefijo) - 1)
+        _addstr_seguro(stdscr, fila, 0, prefijo + destino)
         fila += 1
         mostrados += 1
 
@@ -716,7 +737,9 @@ def _detalle_senales(stdscr, snapshot, pid, y0, alto, ancho):
         info = data.get(clave, {"hex": "?", "nombres": []})
         nombres = ", ".join(info["nombres"]) if info["nombres"] else "(ninguna)"
         _addstr_seguro(stdscr, fila, 0, f"{etiqueta} [{info['hex']}]:", curses.A_UNDERLINE)
-        _addstr_seguro(stdscr, fila + 1, 2, nombres)
+        # El SigBlk de un proceso como systemd no entra en 80 columnas; el '…'
+        # avisa que la lista sigue en vez de dejar una coma colgando.
+        _addstr_seguro(stdscr, fila + 1, 2, _recortar(nombres, ancho - 3))
         fila += 2
 
 
