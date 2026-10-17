@@ -14,7 +14,7 @@ README y en los comentarios del código que las usan.
 
 ## 1. ¿El diseño "sin agregador propio" es el correcto?
 
-Ver README §3.5. La consigna lista un **Agregador** como componente mínimo
+Ver README 3.5. La consigna lista un **Agregador** como componente mínimo
 obligatorio. En mi diseño ese proceso existe (es el servidor que arranca
 `multiprocessing.Manager()`, y se lo puede ver en la propia TUI), pero no lo
 escribí yo: cada analizador escribe directo su clave del snapshot y la
