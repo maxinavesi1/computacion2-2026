@@ -1,0 +1,55 @@
+services:
+  # La plataforma: `docker compose up --build` y queda en http://localhost:8000
+  # (documentación interactiva en http://localhost:8000/docs).
+  api:
+    build:
+      context: .
+      target: app
+    ports:
+      - "8000:8000"
+    environment:
+      WORKERS: "8"
+      # Fijo en 4 en vez de "cantidad de CPUs": con spawn, cada proceso del
+      # pool es un intérprete completo (~50 MB), y en una máquina de 20 hilos
+      # serían 20 procesos precalentados al arrancar.
+      PROCESOS_CPU: "4"
+      MAX_COLA: "1000"
+      TIMEOUT_DEFECTO: "60"
+      TIMEOUT_APAGADO: "10"
+      DIR_DATOS: /app/datos
+    volumes:
+      # Los estado_<timestamp>.json del apagado quedan en ./datos del host, y
+      # sobreviven al contenedor: al volver a levantar, se reportan por log.
+      - ./datos:/app/datos
+    # Tiempo que Docker espera entre SIGTERM y SIGKILL. Tiene que cubrir el
+    # TIMEOUT_APAGADO (10 s) + el cierre de conexiones de uvicorn (5 s).
+    stop_grace_period: 30s
+    depends_on:
+      - lento
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/salud', timeout=2)"]
+      interval: 10s
+      timeout: 3s
+      start_period: 20s
+      retries: 3
+
+  # Servidor auxiliar que simula sitios lentos, para que las mediciones de
+  # descargas no dependan de la red del momento. Desde la API se llega como
+  # http://lento:8001/...; desde el host, como http://localhost:8001/...
+  lento:
+    build:
+      context: .
+      target: app
+    command: ["uvicorn", "app.servidor_lento:app", "--host", "0.0.0.0", "--port", "8001",
+              "--no-access-log"]
+    ports:
+      - "8001:8001"
+
+  # Tests dentro del contenedor (Linux), sin instalar nada en el host:
+  #     docker compose run --rm tests
+  tests:
+    build:
+      context: .
+      target: tests
+    profiles: ["tests"]

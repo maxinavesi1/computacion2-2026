@@ -1,0 +1,15 @@
+# Dependencias de la plataforma (versiones fijadas para que el build sea
+# reproducible).
+#
+# - fastapi: la API HTTP. Trae pydantic (validación de los pedidos) y
+#   starlette (el framework ASGI de abajo).
+# - uvicorn: el servidor ASGI. Se usa SIN el extra [standard] a propósito:
+#   [standard] instala uvloop, que reemplaza el event loop de asyncio por uno
+#   escrito sobre libuv. Queremos medir y explicar el event loop de la stdlib,
+#   que es el que vimos en clase.
+# - httpx: cliente HTTP asíncrono para la tarea `descargar` (ver README §3,
+#   "¿Por qué httpx y no aiohttp?"). La consigna prohíbe `requests`, que es
+#   bloqueante.
+fastapi==0.143.3
+uvicorn==0.54.0
+httpx==0.28.1
