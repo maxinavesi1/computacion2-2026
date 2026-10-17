@@ -15,6 +15,8 @@ def test_valores_por_defecto_razonables():
     assert config.max_cola >= 1
     assert config.timeout_defecto > 0
     assert config.timeout_apagado > 0
+    # El modo que congela el event loop está apagado salvo que se pida.
+    assert config.permitir_bloqueante is False
 
 
 def test_lee_y_convierte_variables_de_entorno():
@@ -26,6 +28,8 @@ def test_lee_y_convierte_variables_de_entorno():
         "TIMEOUT_APAGADO": "4",
         "DIR_DATOS": "/tmp/volcados",
         "PRECALENTAR_PROCESOS": "no",
+        "PERMITIR_BLOQUEANTE": "si",
+        "MAX_DESCARGAS": "30",
         "PUERTO": "9000",
     })
 
@@ -36,6 +40,8 @@ def test_lee_y_convierte_variables_de_entorno():
     assert config.timeout_apagado == 4.0
     assert config.dir_datos == Path("/tmp/volcados")
     assert config.precalentar_procesos is False
+    assert config.permitir_bloqueante is True
+    assert config.max_descargas == 30
     assert config.puerto == 9000
 
 
@@ -43,7 +49,7 @@ def test_variables_ausentes_toman_el_default():
     assert Config.desde_entorno({}) == Config()
 
 
-@pytest.mark.parametrize("variable", ["WORKERS", "MAX_COLA", "PROCESOS_CPU"])
+@pytest.mark.parametrize("variable", ["WORKERS", "MAX_COLA", "PROCESOS_CPU", "MAX_DESCARGAS"])
 def test_rechaza_cantidades_no_positivas(variable):
     with pytest.raises(ValueError, match=variable.lower()):
         Config.desde_entorno({variable: "0"})

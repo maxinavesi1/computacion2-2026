@@ -55,10 +55,18 @@ class Tarea:
     error: str | None = None
     # Fracción completada (0..1) para los tipos que la pueden reportar.
     progreso: float | None = None
-    # Instantes en segundos desde epoch (time.time()).
-    creada: float = field(default_factory=time.time)
+    # Cuándo pasó cada cosa, en hora del reloj de pared (time.time()): es lo
+    # que se muestra. NO sirve para calcular duraciones: ese reloj puede
+    # saltar (NTP, o Docker Desktop resincronizando la hora de su VM, que
+    # medimos: ~1,8 s para atrás cada ~30 s).
+    creada: float = field(default_factory=lambda: time.time())
     iniciada: float | None = None
     finalizada: float | None = None
+    # Los mismos instantes en reloj monotónico, que nunca salta: de acá salen
+    # las duraciones. Es el mismo reloj que usa el event loop (loop.time()).
+    _mono_creada: float = field(default_factory=lambda: time.monotonic(), repr=False)
+    _mono_iniciada: float | None = field(default=None, repr=False)
+    _mono_finalizada: float | None = field(default=None, repr=False)
 
     # --- Estado de ejecución: no se serializa ---------------------------
     # La asyncio.Task que corre la tarea mientras está EJECUTANDO. Es lo que
@@ -70,6 +78,22 @@ class Tarea:
     # Se setea cuando la tarea llega a un estado terminal. Permite esperar a
     # que una cancelación termine de procesarse, sin hacer polling.
     fin: asyncio.Event = field(default_factory=asyncio.Event, repr=False)
+
+    def marcar_inicio(self) -> None:
+        self.iniciada, self._mono_iniciada = time.time(), time.monotonic()
+
+    def marcar_fin(self) -> None:
+        self.finalizada, self._mono_finalizada = time.time(), time.monotonic()
+
+    @property
+    def espera(self) -> float | None:
+        """Segundos que pasó en la cola antes de que un worker la tomara."""
+        return _diferencia(self._mono_creada, self._mono_iniciada)
+
+    @property
+    def duracion(self) -> float | None:
+        """Segundos de ejecución (hasta completarse, fallar o cancelarse)."""
+        return _diferencia(self._mono_iniciada, self._mono_finalizada)
 
     def a_dict(self, incluir_resultado: bool = True) -> dict[str, Any]:
         """Representación JSON-serializable (para la API y para el volcado)."""
@@ -84,8 +108,8 @@ class Tarea:
             "creada": _iso(self.creada),
             "iniciada": _iso(self.iniciada),
             "finalizada": _iso(self.finalizada),
-            "espera_s": _diferencia(self.creada, self.iniciada),
-            "duracion_s": _diferencia(self.iniciada, self.finalizada),
+            "espera_s": self.espera,
+            "duracion_s": self.duracion,
         }
         if incluir_resultado:
             datos["resultado"] = self.resultado

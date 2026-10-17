@@ -13,7 +13,7 @@ from typing import Any
 from fastapi import FastAPI, HTTPException, Query, Response
 
 from app.config import Config
-from app.modelos import PedidoTarea, TareaDetalle, TareaResumen
+from app.modelos import PedidoHashear, PedidoTarea, TareaDetalle, TareaResumen
 from app.plataforma import (ColaLlena, Plataforma, PlataformaCerrada,
                             TareaNoEncontrada, TareaTerminada)
 from app.tarea import Estado
@@ -55,6 +55,10 @@ def crear_app(config: Config | None = None, tipos: dict | None = None,
     @app.post("/tareas", status_code=202, response_model=TareaDetalle,
               summary="Encola una tarea y devuelve su id sin esperar a que termine")
     async def crear_tarea(pedido: PedidoTarea, response: Response):
+        if (isinstance(pedido, PedidoHashear) and pedido.params.ejecutor == "ninguno"
+                and not config.permitir_bloqueante):
+            raise HTTPException(403, "el ejecutor 'ninguno' congela el event loop: está "
+                                     "deshabilitado (se habilita con PERMITIR_BLOQUEANTE=si)")
         try:
             tarea = plataforma().encolar(pedido.tipo, pedido.params.model_dump(mode="json"),
                                          pedido.timeout)

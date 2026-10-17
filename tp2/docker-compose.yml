@@ -13,10 +13,16 @@ services:
       # pool es un intérprete completo (~50 MB), y en una máquina de 20 hilos
       # serían 20 procesos precalentados al arrancar.
       PROCESOS_CPU: "4"
+      # Descargas simultáneas en toda la plataforma (y conexiones de httpx).
+      MAX_DESCARGAS: "100"
       MAX_COLA: "1000"
       TIMEOUT_DEFECTO: "60"
       TIMEOUT_APAGADO: "10"
       DIR_DATOS: /app/datos
+      # Apagado por defecto: el ejecutor "ninguno" de hashear congela el
+      # event loop. Para mostrarlo en vivo:
+      #     PERMITIR_BLOQUEANTE=si docker compose up --build
+      PERMITIR_BLOQUEANTE: "${PERMITIR_BLOQUEANTE:-no}"
     volumes:
       # Los estado_<timestamp>.json del apagado quedan en ./datos del host, y
       # sobreviven al contenedor: al volver a levantar, se reportan por log.
@@ -53,3 +59,22 @@ services:
       context: .
       target: tests
     profiles: ["tests"]
+
+  # Las tres mediciones del README (~5 min):
+  #     docker compose run --rm --build mediciones
+  #     docker compose run --rm --build mediciones --solo 2
+  # Cada experimento levanta su propio servidor dentro de este contenedor,
+  # con la configuración que necesita. Los resultados quedan en
+  # ./mediciones/resultados.md y .json del host.
+  mediciones:
+    build:
+      context: .
+      target: app
+    profiles: ["mediciones"]
+    depends_on:
+      - lento
+    environment:
+      URL_LENTO: http://lento:8001
+    volumes:
+      - ./mediciones:/app/mediciones
+    entrypoint: ["python", "mediciones/medir.py"]

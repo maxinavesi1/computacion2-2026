@@ -7,11 +7,14 @@ defaults. Todas son opcionales.
 |----------------------|----------------|-----------------------------------------------|
 | WORKERS              | 8              | Corrutinas consumiendo la cola                |
 | PROCESOS_CPU         | cantidad CPUs  | Procesos del pool para tareas CPU-bound       |
+| MAX_DESCARGAS        | 100            | Descargas simultáneas en toda la plataforma   |
 | MAX_COLA             | 1000           | Tareas pendientes máximas (después: 503)      |
 | TIMEOUT_DEFECTO      | 60             | Segundos por tarea si el pedido no lo indica  |
 | TIMEOUT_APAGADO      | 10             | Cuánto se espera a las tareas en curso al apagar |
 | DIR_DATOS            | datos          | Dónde se escriben los estado_<timestamp>.json |
 | PRECALENTAR_PROCESOS | si             | Arrancar los procesos del pool al iniciar     |
+| PERMITIR_BLOQUEANTE  | no             | Aceptar hashear con ejecutor "ninguno", que   |
+|                      |                | congela el event loop (sólo para medir)       |
 | HOST / PUERTO        | 0.0.0.0 / 8000 | Dónde escucha la API                          |
 """
 
@@ -33,16 +36,19 @@ def _cpus() -> int:
 class Config:
     workers: int = 8
     procesos_cpu: int = field(default_factory=_cpus)
+    max_descargas: int = 100
     max_cola: int = 1000
     timeout_defecto: float = 60.0
     timeout_apagado: float = 10.0
     dir_datos: Path = Path("datos")
     precalentar_procesos: bool = True
+    permitir_bloqueante: bool = False
     host: str = "0.0.0.0"
     puerto: int = 8000
 
     def __post_init__(self):
-        for nombre in ("workers", "procesos_cpu", "max_cola", "timeout_defecto", "timeout_apagado"):
+        for nombre in ("workers", "procesos_cpu", "max_descargas", "max_cola",
+                       "timeout_defecto", "timeout_apagado"):
             if getattr(self, nombre) <= 0:
                 raise ValueError(f"{nombre} tiene que ser positivo, vino {getattr(self, nombre)!r}")
 

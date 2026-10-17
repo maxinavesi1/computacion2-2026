@@ -1,0 +1,393 @@
+{
+  "entorno": {
+    "fecha": "2026-10-17T17:24:36",
+    "cpus": 20,
+    "python": "3.12.15",
+    "plataforma": "Linux-6.6.87.2-microsoft-standard-WSL2-x86_64-with-glibc2.41"
+  },
+  "medicion_1": {
+    "servidor lento (local)": {
+      "secuencial_s": 11.769,
+      "concurrente_s": 1.005,
+      "speedup": 11.7,
+      "suma_individuales_s": 11.768,
+      "mas_lenta_s": 0.981,
+      "ok": 120,
+      "errores": 0,
+      "corridas": {
+        "secuencial": [
+          11.7562,
+          11.7699,
+          11.7689
+        ],
+        "concurrente": [
+          1.0094,
+          1.0052,
+          1.0042
+        ]
+      }
+    },
+    "internet (20 sitios reales)": {
+      "secuencial_s": 7.199,
+      "concurrente_s": 1.625,
+      "speedup": 4.4,
+      "suma_individuales_s": 7.199,
+      "mas_lenta_s": 1.601,
+      "ok": 120,
+      "errores": 0,
+      "corridas": {
+        "secuencial": [
+          7.1993,
+          7.554,
+          6.8266
+        ],
+        "concurrente": [
+          1.6248,
+          1.5396,
+          1.9663
+        ]
+      }
+    }
+  },
+  "medicion_2": {
+    "iteraciones": 8635578,
+    "sin carga (referencia)": {
+      "duracion_hash_s": null,
+      "respuestas_mientras_corria": null,
+      "p50_ms": 2.9,
+      "p95_ms": 3.7,
+      "max_ms": 3.9
+    },
+    "hash con ejecutor=ninguno": {
+      "duracion_hash_s": 2.838,
+      "respuestas_mientras_corria": 0,
+      "p50_ms": 2837.2,
+      "p95_ms": 2837.2,
+      "max_ms": 2837.2
+    },
+    "hash con ejecutor=hilos": {
+      "duracion_hash_s": 2.901,
+      "respuestas_mientras_corria": 47,
+      "p50_ms": 11.8,
+      "p95_ms": 17.5,
+      "max_ms": 18.5
+    },
+    "hash con ejecutor=procesos": {
+      "duracion_hash_s": 3.012,
+      "respuestas_mientras_corria": 59,
+      "p50_ms": 0.9,
+      "p95_ms": 1.1,
+      "max_ms": 1.2
+    }
+  },
+  "medicion_3": {
+    "A": {
+      "config": {
+        "workers": 8
+      },
+      "params": {
+        "segundos": 1
+      },
+      "filas": [
+        {
+          "k": 1,
+          "envio_s": 0.001,
+          "total_s": 1.025,
+          "espera_prom_s": 0.0,
+          "duracion_prom_s": 1.001,
+          "no_completadas": 0,
+          "rss_mb": 53.3
+        },
+        {
+          "k": 4,
+          "envio_s": 0.003,
+          "total_s": 1.018,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 1.003,
+          "no_completadas": 0,
+          "rss_mb": 53.3
+        },
+        {
+          "k": 8,
+          "envio_s": 0.005,
+          "total_s": 1.025,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 1.001,
+          "no_completadas": 0,
+          "rss_mb": 53.3
+        },
+        {
+          "k": 9,
+          "envio_s": 0.004,
+          "total_s": 2.046,
+          "espera_prom_s": 0.112,
+          "duracion_prom_s": 1.001,
+          "no_completadas": 0,
+          "rss_mb": 53.3
+        },
+        {
+          "k": 16,
+          "envio_s": 0.012,
+          "total_s": 2.048,
+          "espera_prom_s": 0.503,
+          "duracion_prom_s": 1.003,
+          "no_completadas": 0,
+          "rss_mb": 53.3
+        },
+        {
+          "k": 32,
+          "envio_s": 0.014,
+          "total_s": 4.026,
+          "espera_prom_s": 1.504,
+          "duracion_prom_s": 1.003,
+          "no_completadas": 0,
+          "rss_mb": 53.5
+        },
+        {
+          "k": 64,
+          "envio_s": 0.053,
+          "total_s": 8.063,
+          "espera_prom_s": 3.507,
+          "duracion_prom_s": 1.002,
+          "no_completadas": 0,
+          "rss_mb": 53.8
+        }
+      ]
+    },
+    "B": {
+      "config": {
+        "workers": 64,
+        "procesos_cpu": 4
+      },
+      "params": {
+        "texto": "techo",
+        "iteraciones": 1444669
+      },
+      "filas": [
+        {
+          "k": 1,
+          "envio_s": 0.001,
+          "total_s": 0.51,
+          "espera_prom_s": 0.0,
+          "duracion_prom_s": 0.495,
+          "no_completadas": 0,
+          "rss_mb": 53.1
+        },
+        {
+          "k": 2,
+          "envio_s": 0.001,
+          "total_s": 0.532,
+          "espera_prom_s": 0.0,
+          "duracion_prom_s": 0.504,
+          "no_completadas": 0,
+          "rss_mb": 53.1
+        },
+        {
+          "k": 4,
+          "envio_s": 0.002,
+          "total_s": 0.512,
+          "espera_prom_s": 0.0,
+          "duracion_prom_s": 0.493,
+          "no_completadas": 0,
+          "rss_mb": 53.1
+        },
+        {
+          "k": 5,
+          "envio_s": 0.003,
+          "total_s": 0.684,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 0.649,
+          "no_completadas": 0,
+          "rss_mb": 53.1
+        },
+        {
+          "k": 8,
+          "envio_s": 0.004,
+          "total_s": 1.068,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 1.025,
+          "no_completadas": 0,
+          "rss_mb": 53.1
+        },
+        {
+          "k": 16,
+          "envio_s": 0.008,
+          "total_s": 2.037,
+          "espera_prom_s": 0.002,
+          "duracion_prom_s": 1.975,
+          "no_completadas": 0,
+          "rss_mb": 53.1
+        }
+      ]
+    },
+    "B2": {
+      "config": {
+        "workers": 128,
+        "procesos_cpu": 20
+      },
+      "params": {
+        "texto": "techo",
+        "iteraciones": 1131477
+      },
+      "filas": [
+        {
+          "k": 1,
+          "envio_s": 0.001,
+          "total_s": 0.416,
+          "espera_prom_s": 0.0,
+          "duracion_prom_s": 0.404,
+          "no_completadas": 0,
+          "rss_mb": 54.1
+        },
+        {
+          "k": 2,
+          "envio_s": 0.002,
+          "total_s": 0.419,
+          "espera_prom_s": 0.0,
+          "duracion_prom_s": 0.412,
+          "no_completadas": 0,
+          "rss_mb": 54.1
+        },
+        {
+          "k": 4,
+          "envio_s": 0.002,
+          "total_s": 0.446,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 0.411,
+          "no_completadas": 0,
+          "rss_mb": 54.1
+        },
+        {
+          "k": 5,
+          "envio_s": 0.003,
+          "total_s": 0.444,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 0.417,
+          "no_completadas": 0,
+          "rss_mb": 54.1
+        },
+        {
+          "k": 10,
+          "envio_s": 0.021,
+          "total_s": 0.733,
+          "espera_prom_s": 0.001,
+          "duracion_prom_s": 0.662,
+          "no_completadas": 0,
+          "rss_mb": 54.1
+        },
+        {
+          "k": 20,
+          "envio_s": 0.026,
+          "total_s": 1.003,
+          "espera_prom_s": 0.005,
+          "duracion_prom_s": 0.94,
+          "no_completadas": 0,
+          "rss_mb": 54.1
+        },
+        {
+          "k": 40,
+          "envio_s": 0.017,
+          "total_s": 1.956,
+          "espera_prom_s": 0.004,
+          "duracion_prom_s": 1.888,
+          "no_completadas": 0,
+          "rss_mb": 54.2
+        }
+      ]
+    },
+    "C": {
+      "config": {
+        "workers": 2000
+      },
+      "params": {
+        "urls": [
+          "http://lento:8001/lento?segundos=1&kb=1"
+        ]
+      },
+      "filas": [
+        {
+          "k": 50,
+          "envio_s": 0.052,
+          "total_s": 1.147,
+          "espera_prom_s": 0.009,
+          "duracion_prom_s": 1.069,
+          "no_completadas": 0,
+          "rss_mb": 59.4
+        },
+        {
+          "k": 100,
+          "envio_s": 0.042,
+          "total_s": 1.214,
+          "espera_prom_s": 0.01,
+          "duracion_prom_s": 1.133,
+          "no_completadas": 0,
+          "rss_mb": 60.7
+        },
+        {
+          "k": 101,
+          "envio_s": 0.053,
+          "total_s": 2.094,
+          "espera_prom_s": 0.01,
+          "duracion_prom_s": 1.149,
+          "no_completadas": 0,
+          "rss_mb": 61.0
+        },
+        {
+          "k": 200,
+          "envio_s": 0.104,
+          "total_s": 2.397,
+          "espera_prom_s": 0.01,
+          "duracion_prom_s": 1.727,
+          "no_completadas": 0,
+          "rss_mb": 62.1
+        },
+        {
+          "k": 400,
+          "envio_s": 0.181,
+          "total_s": 4.607,
+          "espera_prom_s": 0.009,
+          "duracion_prom_s": 2.819,
+          "no_completadas": 0,
+          "rss_mb": 64.2
+        },
+        {
+          "k": 800,
+          "envio_s": 0.359,
+          "total_s": 9.225,
+          "espera_prom_s": 0.011,
+          "duracion_prom_s": 5.044,
+          "no_completadas": 0,
+          "rss_mb": 66.2
+        }
+      ]
+    },
+    "D": {
+      "filas": [
+        {
+          "k": 1000,
+          "envio_s": 0.35,
+          "total_s": 1.419,
+          "rss_mb": 59.1
+        },
+        {
+          "k": 5000,
+          "envio_s": 1.727,
+          "total_s": 2.832,
+          "rss_mb": 76.5
+        },
+        {
+          "k": 10000,
+          "envio_s": 3.545,
+          "total_s": 4.692,
+          "rss_mb": 93.1
+        },
+        {
+          "k": 20000,
+          "envio_s": 7.364,
+          "total_s": 8.579,
+          "rss_mb": 127.8
+        }
+      ]
+    }
+  }
+}

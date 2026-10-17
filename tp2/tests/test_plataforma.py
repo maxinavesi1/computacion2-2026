@@ -8,6 +8,7 @@ import asyncio
 import json
 import logging
 import time
+from datetime import UTC, datetime
 
 import pytest
 
@@ -309,6 +310,34 @@ async def test_al_arrancar_reporta_volcados_previos(tmp_path, caplog):
 
     assert "estado_" in caplog.text
     assert "1 tareas" in caplog.text and "pendiente: 1" in caplog.text
+
+
+async def test_con_varios_volcados_detalla_el_ultimo_y_cuenta_los_demas(tmp_path, caplog):
+    for hora in (10, 11):
+        volcar_estado([], tmp_path, ahora=datetime(2026, 10, 17, hora, tzinfo=UTC))
+    vieja = Tarea(tipo="dormir", params={"s": 1}, timeout=5)
+    volcar_estado([vieja], tmp_path, ahora=datetime(2026, 10, 17, 12, tzinfo=UTC))
+    p = Plataforma(_config(tmp_path), tipos=TIPOS_PRUEBA, recursos=RecursosFalsos())
+
+    with caplog.at_level(logging.INFO):
+        await p.iniciar()
+    await p.apagar()
+
+    assert "estado_20261017-120000.json — 1 tareas (pendiente: 1)" in caplog.text
+    assert "2 volcados anteriores" in caplog.text
+    assert "estado_20261017-100000.json" not in caplog.text
+
+
+async def test_un_volcado_vacio_se_reporta_sin_detalle(tmp_path, caplog):
+    volcar_estado([], tmp_path, ahora=datetime(2026, 10, 17, 10, tzinfo=UTC))
+    p = Plataforma(_config(tmp_path), tipos=TIPOS_PRUEBA, recursos=RecursosFalsos())
+
+    with caplog.at_level(logging.INFO):
+        await p.iniciar()
+    await p.apagar()
+
+    assert "estado_20261017-100000.json — 0 tareas" in caplog.text
+    assert "()" not in caplog.text
 
 
 async def test_apagado_ordenado(tmp_path):

@@ -30,7 +30,8 @@ class ParamsHashear(_Estricto):
     texto: str = Field(max_length=10_000)
     iteraciones: int = Field(ge=1, le=1_000_000_000, description="Veces que se aplica SHA-256")
     ejecutor: Literal["procesos", "hilos", "ninguno"] = Field(
-        "procesos", description='"ninguno" BLOQUEA el event loop: sólo para la medición 2')
+        "procesos", description='"ninguno" BLOQUEA el event loop: sólo para la medición 2, '
+                                'y requiere PERMITIR_BLOQUEANTE=si')
 
 
 class ParamsEsperar(_Estricto):

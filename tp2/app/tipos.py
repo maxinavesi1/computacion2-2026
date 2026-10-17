@@ -14,17 +14,21 @@ poder atravesarlas: ninguna lo captura.
 """
 
 import asyncio
+import logging
 import multiprocessing
 import signal
 import time
 from collections.abc import Callable
 from concurrent.futures import Executor, ProcessPoolExecutor, ThreadPoolExecutor
-from dataclasses import dataclass
+from concurrent.futures.process import BrokenProcessPool
+from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
 
 from app.hashing import hash_iterado
+
+log = logging.getLogger(__name__)
 
 Progreso = Callable[[float], None]
 
@@ -51,6 +55,19 @@ def _calentar():
     return None
 
 
+def _crear_pool_procesos(procesos: int) -> ProcessPoolExecutor:
+    # spawn explícito en todas las plataformas: el hijo arranca un intérprete
+    # limpio en vez de heredar por fork() una copia del padre con el event
+    # loop, el socket que escucha en :8000 y las conexiones abiertas. Es más
+    # lento de arrancar (por eso el precalentado), pero se comporta igual en
+    # Linux, macOS y Windows.
+    return ProcessPoolExecutor(
+        max_workers=procesos,
+        mp_context=multiprocessing.get_context("spawn"),
+        initializer=_ignorar_sigint,
+    )
+
+
 @dataclass
 class Recursos:
     """Objetos que comparten todas las tareas. Se crean una vez al arrancar."""
@@ -58,33 +75,47 @@ class Recursos:
     cliente_http: httpx.AsyncClient
     pool_procesos: Executor
     pool_hilos: Executor
+    procesos: int = 2  # tamaño del pool de procesos (para poder rearmarlo)
+    # Tope de descargas simultáneas en TODA la plataforma (no por tarea).
+    # Las que exceden el tope esperan acá, y no en el pool de conexiones de
+    # httpx: medimos que esa fila interna se vuelve cara con cientos de
+    # requests esperando (con 800 descargas, el doble de tiempo), mientras
+    # que un Semaphore despierta a la siguiente en O(1).
+    limite_descargas: asyncio.Semaphore = field(default_factory=lambda: asyncio.Semaphore(100))
 
     @classmethod
-    def crear(cls, procesos: int) -> "Recursos":
+    def crear(cls, procesos: int, max_descargas: int = 100) -> "Recursos":
         return cls(
             # Un solo cliente para todas las descargas: reutiliza conexiones
             # (keep-alive) y limita cuántas hay abiertas a la vez.
             cliente_http=httpx.AsyncClient(
                 timeout=httpx.Timeout(30.0, connect=10.0),
-                limits=httpx.Limits(max_connections=100, max_keepalive_connections=20),
+                limits=httpx.Limits(max_connections=max_descargas, max_keepalive_connections=20),
                 follow_redirects=True,
             ),
-            # spawn explícito en todas las plataformas: el hijo arranca un
-            # intérprete limpio en vez de heredar por fork() una copia del
-            # padre con el event loop, el socket que escucha en :8000 y las
-            # conexiones abiertas. Es más lento de arrancar (por eso el
-            # precalentado), pero se comporta igual en Linux, macOS y Windows.
-            pool_procesos=ProcessPoolExecutor(
-                max_workers=procesos,
-                mp_context=multiprocessing.get_context("spawn"),
-                initializer=_ignorar_sigint,
-            ),
+            pool_procesos=_crear_pool_procesos(procesos),
             # Pool de hilos propio para el modo "hilos" de hashear. No usamos
             # el executor por defecto del loop porque asyncio lo usa para
             # resolver DNS (getaddrinfo): si lo llenáramos de hashes, las
             # descargas se quedarían esperando para resolver nombres.
             pool_hilos=ThreadPoolExecutor(max_workers=procesos, thread_name_prefix="hashear"),
+            procesos=procesos,
+            limite_descargas=asyncio.Semaphore(max_descargas),
         )
+
+    def reemplazar_pool_procesos(self, roto: Executor) -> None:
+        """Arma un ProcessPoolExecutor nuevo en lugar de uno roto.
+
+        Si un proceso hijo muere de golpe (lo mata el sistema por falta de
+        memoria, un segfault...), el ProcessPoolExecutor queda marcado como
+        roto y rechaza todo lo que se le mande, para siempre. Sin esto, un
+        solo accidente dejaría a `hashear` inutilizable hasta reiniciar.
+        """
+        if self.pool_procesos is not roto:
+            return  # otra tarea que se topó con el mismo pool ya lo reemplazó
+        log.error("El pool de procesos se rompió (murió un proceso hijo); armo uno nuevo")
+        self.pool_procesos = _crear_pool_procesos(self.procesos)
+        roto.shutdown(wait=False, cancel_futures=True)
 
     async def precalentar(self, procesos: int) -> None:
         """Fuerza el arranque de los procesos del pool antes de la primera tarea.
@@ -146,7 +177,13 @@ async def hashear(params: dict[str, Any], recursos: Recursos, progreso: Progreso
             bloque = min(ITERACIONES_POR_BLOQUE, total - hechas)
             # Entre bloque y bloque la corrutina vuelve a pasar por un await:
             # ahí es donde una cancelación o un timeout la pueden alcanzar.
-            h = await loop.run_in_executor(executor, hash_iterado, h, bloque)
+            try:
+                h = await loop.run_in_executor(executor, hash_iterado, h, bloque)
+            except BrokenProcessPool:
+                # Esta tarea falla (queda `fallida` con el motivo), pero las
+                # siguientes ya encuentran un pool sano.
+                recursos.reemplazar_pool_procesos(executor)
+                raise
             hechas += bloque
             progreso(hechas / total)
 
@@ -160,27 +197,30 @@ async def hashear(params: dict[str, Any], recursos: Recursos, progreso: Progreso
 
 # --- descargar: I/O-bound -------------------------------------------------
 
-async def _descargar_una(cliente: httpx.AsyncClient, url: str) -> dict:
+async def _descargar_una(recursos: Recursos, url: str) -> dict:
     """Descarga una URL midiendo código, tamaño y tiempo.
 
     Los errores de red/HTTP se devuelven como dato (una URL caída no hace
     fallar a las demás). Cualquier otra excepción se propaga.
     """
-    inicio = time.perf_counter()
-    try:
-        # stream() en vez de get(): el cuerpo se recorre de a pedazos sin
-        # tenerlo entero en memoria. El `async with` garantiza que la
-        # respuesta se cierre (y la conexión vuelva al pool o se descarte)
-        # pase lo que pase, incluida una cancelación a mitad de camino.
-        async with cliente.stream("GET", url) as respuesta:
-            tamano = 0
-            async for pedazo in respuesta.aiter_bytes():
-                tamano += len(pedazo)
-        return {"url": url, "codigo": respuesta.status_code, "bytes": tamano,
-                "segundos": round(time.perf_counter() - inicio, 4)}
-    except httpx.HTTPError as e:
-        return {"url": url, "error": f"{type(e).__name__}: {e}",
-                "segundos": round(time.perf_counter() - inicio, 4)}
+    # Primero un lugar entre las MAX_DESCARGAS simultáneas. El tiempo que se
+    # reporta empieza después: es lo que tardó la descarga, no la fila.
+    async with recursos.limite_descargas:
+        inicio = time.perf_counter()
+        try:
+            # stream() en vez de get(): el cuerpo se recorre de a pedazos sin
+            # tenerlo entero en memoria. El `async with` garantiza que la
+            # respuesta se cierre (y la conexión vuelva al pool o se descarte)
+            # pase lo que pase, incluida una cancelación a mitad de camino.
+            async with recursos.cliente_http.stream("GET", url) as respuesta:
+                tamano = 0
+                async for pedazo in respuesta.aiter_bytes():
+                    tamano += len(pedazo)
+            return {"url": url, "codigo": respuesta.status_code, "bytes": tamano,
+                    "segundos": round(time.perf_counter() - inicio, 4)}
+        except httpx.HTTPError as e:
+            return {"url": url, "error": f"{type(e).__name__}: {e}",
+                    "segundos": round(time.perf_counter() - inicio, 4)}
 
 
 async def descargar(params: dict[str, Any], recursos: Recursos, progreso: Progreso) -> dict:
@@ -199,7 +239,7 @@ async def descargar(params: dict[str, Any], recursos: Recursos, progreso: Progre
 
     async def una(url: str) -> dict:
         nonlocal terminadas  # sin Lock: entre dos awaits nadie más corre
-        resultado = await _descargar_una(recursos.cliente_http, url)
+        resultado = await _descargar_una(recursos, url)
         terminadas += 1
         progreso(terminadas / len(urls))
         return resultado

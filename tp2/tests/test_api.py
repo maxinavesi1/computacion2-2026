@@ -7,6 +7,7 @@ la app (que arranca y apaga la Plataforma) corre igual que en producción.
 import asyncio
 import time
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
@@ -22,23 +23,36 @@ async def _web_falsa(request):
     return httpx.Response(200, content=b"hola mundo")
 
 
-@pytest.fixture
-async def app(tmp_path):
-    config = Config(workers=2, max_cola=3, timeout_defecto=5, timeout_apagado=0.3,
-                    dir_datos=tmp_path, precalentar_procesos=False)
+@asynccontextmanager
+async def _app_con(tmp_path, **cambios):
+    valores = dict(workers=2, max_cola=3, timeout_defecto=5, timeout_apagado=0.3,
+                   dir_datos=tmp_path, precalentar_procesos=False)
+    valores.update(cambios)
     # Hilos en lugar de procesos para que los tests no paguen el spawn.
     pool = ThreadPoolExecutor(max_workers=2)
     recursos = Recursos(cliente_http=httpx.AsyncClient(transport=httpx.MockTransport(_web_falsa)),
                         pool_procesos=pool, pool_hilos=pool)
-    aplicacion = crear_app(config, recursos=recursos)
+    aplicacion = crear_app(Config(**valores), recursos=recursos)
     async with aplicacion.router.lifespan_context(aplicacion):
+        yield aplicacion
+
+
+@asynccontextmanager
+async def _cliente_de(aplicacion):
+    transporte = httpx.ASGITransport(app=aplicacion)
+    async with httpx.AsyncClient(transport=transporte, base_url="http://tp2") as c:
+        yield c
+
+
+@pytest.fixture
+async def app(tmp_path):
+    async with _app_con(tmp_path) as aplicacion:
         yield aplicacion
 
 
 @pytest.fixture
 async def cliente(app):
-    transporte = httpx.ASGITransport(app=app)
-    async with httpx.AsyncClient(transport=transporte, base_url="http://tp2") as c:
+    async with _cliente_de(app) as c:
         yield c
 
 
@@ -99,6 +113,29 @@ async def test_tarea_hashear_completa(cliente):
 async def test_hashear_usa_procesos_por_defecto(cliente):
     tarea = await _crear(cliente, "hashear", {"texto": "abc", "iteraciones": 10})
     assert tarea["params"]["ejecutor"] == "procesos"
+
+
+async def test_hashear_sin_executor_esta_prohibido_por_defecto(cliente):
+    # Congelaría el event loop: un cliente cualquiera no puede pedirlo.
+    pedido = {"tipo": "hashear", "params": {"texto": "x", "iteraciones": 10, "ejecutor": "ninguno"}}
+
+    r = await cliente.post("/tareas", json=pedido)
+
+    assert r.status_code == 403
+    assert "PERMITIR_BLOQUEANTE" in r.json()["detail"]
+    assert (await cliente.get("/tareas")).json() == []  # no se encoló nada
+
+
+async def test_hashear_sin_executor_se_puede_habilitar_para_medir(tmp_path):
+    pedido = {"tipo": "hashear", "params": {"texto": "x", "iteraciones": 10, "ejecutor": "ninguno"}}
+
+    async with (_app_con(tmp_path, permitir_bloqueante=True) as aplicacion,
+                _cliente_de(aplicacion) as cliente):
+        r = await cliente.post("/tareas", json=pedido)
+        final = await _esperar_fin(cliente, r.json()["id"])
+
+    assert r.status_code == 202
+    assert final["resultado"]["hash"] == hash_iterado(b"x", 10).hex()
 
 
 async def test_tarea_descargar_completa(cliente):

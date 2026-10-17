@@ -6,8 +6,10 @@ controladas, para que los tiempos sean predecibles.
 
 import asyncio
 import multiprocessing
+import os
 import time
 from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 import httpx
 import pytest
@@ -175,6 +177,27 @@ async def test_hashear_se_cancela_entre_bloques(recursos, ejecutor):
     assert time.perf_counter() - inicio < 0.1
 
 
+async def test_si_muere_un_proceso_del_pool_se_arma_uno_nuevo(pool_hilos):
+    roto = ProcessPoolExecutor(max_workers=1, mp_context=multiprocessing.get_context("spawn"))
+    recursos = Recursos(cliente_http=httpx.AsyncClient(), pool_procesos=roto,
+                        pool_hilos=pool_hilos, procesos=1)
+    # Simula que el sistema mata a un proceso hijo (por ejemplo, por falta de
+    # memoria): el ProcessPoolExecutor queda inutilizable para siempre.
+    with pytest.raises(BrokenProcessPool):
+        await asyncio.get_running_loop().run_in_executor(roto, os._exit, 1)
+    params = {"texto": "x", "iteraciones": 10, "ejecutor": "procesos"}
+
+    # La tarea que se topa con el pool roto falla con el motivo...
+    with pytest.raises(BrokenProcessPool):
+        await hashear(params, recursos, _sin_progreso)
+    # ...pero la siguiente ya corre en un pool nuevo.
+    resultado = await hashear(params, recursos, _sin_progreso)
+
+    assert resultado["hash"] == hash_iterado(b"x", 10).hex()
+    assert recursos.pool_procesos is not roto
+    recursos.pool_procesos.shutdown()
+
+
 # --- descargar ------------------------------------------------------------
 
 def _handler_con_demora(demora_s, tamano=1000):
@@ -231,6 +254,29 @@ async def test_descargar_reporta_errores_por_url_sin_fallar_toda_la_tarea(recurs
     assert "ConnectError" in caida["error"] and "codigo" not in caida
     assert no_existe["codigo"] == 404  # un 404 es una respuesta, no un error de red
     assert resultado["ok"] == 2 and resultado["errores"] == 1
+
+
+async def test_hay_un_tope_global_de_descargas_simultaneas(recursos):
+    en_vuelo = maximo = 0
+
+    async def handler(request):
+        nonlocal en_vuelo, maximo
+        en_vuelo += 1
+        maximo = max(maximo, en_vuelo)
+        await asyncio.sleep(0.02)
+        en_vuelo -= 1
+        return httpx.Response(200, content=b"ok")
+
+    _con_transporte(recursos, handler)
+    recursos.limite_descargas = asyncio.Semaphore(3)
+    params = {"urls": URLS * 2, "concurrente": True}
+
+    # Dos tareas de 10 URLs a la vez: el tope es de toda la plataforma, no por tarea.
+    resultados = await asyncio.gather(descargar(params, recursos, _sin_progreso),
+                                      descargar(params, recursos, _sin_progreso))
+
+    assert maximo == 3
+    assert all(r["ok"] == 10 for r in resultados)
 
 
 async def test_descargar_reporta_progreso(recursos):

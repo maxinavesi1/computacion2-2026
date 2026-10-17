@@ -14,7 +14,6 @@ marcarla EJECUTANDO") son atómicos respecto de las demás corrutinas.
 
 import asyncio
 import logging
-import time
 from collections import Counter
 from collections.abc import Callable
 from pathlib import Path
@@ -88,7 +87,7 @@ class Plataforma:
     async def iniciar(self) -> None:
         await asyncio.to_thread(self._reportar_volcados_previos)
         if self._recursos is None:
-            self._recursos = Recursos.crear(self._config.procesos_cpu)
+            self._recursos = Recursos.crear(self._config.procesos_cpu, self._config.max_descargas)
             if self._config.precalentar_procesos:
                 await self._recursos.precalentar(self._config.procesos_cpu)
         for numero in range(self._config.workers):
@@ -98,15 +97,22 @@ class Plataforma:
                  self._config.workers, self._config.procesos_cpu, self._config.max_cola)
 
     def _reportar_volcados_previos(self) -> None:
-        for ruta in buscar_volcados(self._config.dir_datos):
-            try:
-                resumen = resumir_volcado(ruta)
-            except ValueError as e:
-                log.warning("Volcado previo ilegible: %s", e)
-                continue
+        """Loguea el volcado más reciente (con el conteo por estado) y cuántos más hay."""
+        volcados = buscar_volcados(self._config.dir_datos)
+        if not volcados:
+            return
+        ultimo = volcados[-1]
+        try:
+            resumen = resumir_volcado(ultimo)
+        except ValueError as e:
+            log.warning("Volcado previo ilegible: %s", e)
+        else:
             total = resumen.pop("total")
             detalle = ", ".join(f"{estado}: {n}" for estado, n in sorted(resumen.items()))
-            log.info("Volcado previo encontrado: %s — %d tareas (%s)", ruta.name, total, detalle)
+            log.info("Volcado previo encontrado: %s — %d tareas%s",
+                     ultimo.name, total, f" ({detalle})" if detalle else "")
+        if len(volcados) > 1:
+            log.info("Hay además %d volcados anteriores en %s", len(volcados) - 1, self._config.dir_datos)
 
     def dejar_de_aceptar(self) -> None:
         """Primer paso del apagado. Es sólo un flag: se puede llamar desde un
@@ -191,7 +197,7 @@ class Plataforma:
             # marca cancelada y el worker que la saque la va a saltear.
             tarea.estado = Estado.CANCELADA
             tarea.error = f"{motivo} (estaba en cola)"
-            tarea.finalizada = time.time()
+            tarea.marcar_fin()
             tarea.fin.set()
             return tarea
 
@@ -216,7 +222,7 @@ class Plataforma:
             por_tipo[tipo] = {
                 "total": sum(1 for t in tareas if t.tipo == tipo),
                 "completadas": len(del_tipo),
-                "ejecucion_promedio_s": _promedio([t.finalizada - t.iniciada for t in del_tipo]),
+                "ejecucion_promedio_s": _promedio([t.duracion for t in del_tipo]),
             }
 
         return {
@@ -226,8 +232,8 @@ class Plataforma:
             # en_cola incluye canceladas que todavía no se sacaron de la cola.
             "cola": {"en_cola": self._cola.qsize(), "capacidad": self._config.max_cola},
             "tiempos_promedio_s": {
-                "espera": _promedio([t.iniciada - t.creada for t in tareas if t.iniciada]),
-                "ejecucion": _promedio([t.finalizada - t.iniciada for t in completadas]),
+                "espera": _promedio([t.espera for t in tareas if t.espera is not None]),
+                "ejecucion": _promedio([t.duracion for t in completadas]),
             },
             "por_tipo": por_tipo,
         }
@@ -267,7 +273,7 @@ class Plataforma:
 
     async def _correr(self, tarea: Tarea) -> None:
         tarea.estado = Estado.EJECUTANDO
-        tarea.iniciada = time.time()
+        tarea.marcar_inicio()
         self._ocupados += 1
         # La tarea corre en su propia asyncio.Task, separada del worker: así
         # DELETE puede cancelar la tarea sin matar al worker que la corre.
@@ -291,7 +297,7 @@ class Plataforma:
             tarea.estado = Estado.FALLIDA
             tarea.error = _describir(e)
         finally:
-            tarea.finalizada = time.time()
+            tarea.marcar_fin()
             tarea.ejecucion = None
             self._ocupados -= 1
             tarea.fin.set()
