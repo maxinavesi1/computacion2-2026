@@ -24,6 +24,8 @@ def ocupar_cpu(segundos):
 threading.Thread(target=ocupar_cpu, args=(40,), daemon=True).start()
 inicial = anterior = time.time() - time.monotonic()
 for i in range(160):
+    # time.sleep está bien acá: este script es sincrónico (no hay event loop
+    # ni corrutinas) y no forma parte de la plataforma.
     time.sleep(0.25)
     desfase = time.time() - time.monotonic()
     if abs(desfase - anterior) > 0.05:
