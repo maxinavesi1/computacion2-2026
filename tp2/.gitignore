@@ -3,7 +3,9 @@ __pycache__/
 .pytest_cache/
 .venv/
 venv/
-# Volcados de estado que genera el apagado ordenado (ver README §3.5).
+# Volcados de estado que genera el apagado ordenado (ver README §3.6).
 datos/
 estado_*.json
+# Corridas sueltas de una medición (--solo N). La oficial es resultados.md/.json.
+mediciones/resultados_*
 .DS_Store
